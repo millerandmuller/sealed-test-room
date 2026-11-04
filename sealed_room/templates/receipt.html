@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Receipt {{ x.run_id }} - Sealed Test Room{% endblock %}
+{% block body %}
+<h1>Receipt for run {{ x.run_id }}</h1>
+<p class="lede">Tool <span class="mono">{{ x.tool.spec }}</span>, version <span class="mono">{{ x.tool.version_installed or "not installed" }}</span> &middot; started {{ x.started|hhmmss }} UTC{% if x.finished %}, finished {{ x.finished|hhmmss }} UTC{% endif %}</p>
+
+{% if x.clean %}
+  <div class="banner ok"><strong>CLEAN.</strong> The run completed, the wall check passed, and every room was proven absent.</div>
+{% else %}
+  <div class="banner bad"><strong>NOT CLEAN.</strong>
+    <ul style="margin:6px 0 0">{% for why in x.unclean_reasons %}<li>{{ why }}</li>{% endfor %}</ul></div>
+{% endif %}
+{% if schema_problems %}
+  <div class="banner bad"><strong>This receipt does not match its schema.</strong> {{ schema_problems|join("; ") }}</div>
+{% endif %}
+
+<p class="noprint">
+  <a class="btn" href="/runs/{{ x.run_id }}/receipt.json" download="receipt-{{ x.run_id }}.json">Download JSON</a>
+  <a class="btn" href="#" onclick="window.print(); return false;">Print</a>
+</p>
+
+<h2>Network policy and wall check</h2>
+<div class="box">
+  <p style="margin:0">Allowed from inside the sealed room:
+    <span class="mono">{{ x.network.allowed_host }}</span> at <span class="mono">{{ x.network.allowed_ip }}:{{ x.network.allowed_port }}</span>. Everything else: denied.</p>
+  <p class="small" style="margin:6px 0 0">The policy uses the endpoint's IP address, resolved on the host when the room was created, because domain-name rules break TLS in this Microsandbox version. Blocked hosts were pinned to their real addresses inside the room, so each refusal is a policy decision, not a failed name lookup.</p>
+  {% for room in x.rooms if room.kind == "sealed" %}<p class="mono hash" style="margin:8px 0 0">{{ room.policy }}</p>{% endfor %}
+</div>
+<table style="margin-top:10px">
+  <tr><th>Host</th><th>Verdict</th><th>Detail</th></tr>
+  {% for w in x.wall_check.rows %}
+    <tr class="row-{{ w.verdict }}"><td class="mono">{{ w.host }}</td><td class="verdict {{ w.verdict }}">{{ w.verdict }}</td>
+      <td class="small mono">{{ w.detail }} &middot; {{ w.ms }} ms</td></tr>
+  {% else %}<tr><td colspan="3" class="small">The wall check did not run.</td></tr>{% endfor %}
+</table>
+<p class="small">Attempts were made from inside the sealed room, before any study data entered. Wall check verdict: <strong>{{ x.wall_check.verdict or "NOT RUN" }}</strong>.</p>
+
+<h2>Rooms</h2>
+<table>
+  <tr><th>Room</th><th>Kind</th><th>Created</th><th>Destroyed</th><th>Verified absent</th></tr>
+  {% for room in x.rooms %}
+    <tr><td class="mono">{{ room.id }}</td><td>{{ room.kind }}{% if room.kind == "download" %} <span class="small">(open network, no study data)</span>{% endif %}</td>
+      <td class="mono">{{ room.created|hhmmss }}</td><td class="mono">{{ room.destroyed|hhmmss }}</td>
+      <td class="mono">{% if room.verified_absent %}{{ room.verified_absent|hhmmss }}{% else %}<strong style="color:var(--red)">NOT VERIFIED</strong>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% for room in x.rooms if room.destroy_check %}
+  <p class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }} &middot; verified absent {{ room.verified_absent|hhmmss if room.verified_absent else "NO" }}
+    <span class="small">({{ room.destroy_check.command }})</span></p>
+{% endfor %}
+
+<h2>Tool</h2>
+<div class="box">
+  <p style="margin:0"><span class="mono">{{ x.tool.spec }}</span> installed offline in the sealed room, version <span class="mono">{{ x.tool.version_installed }}</span>.</p>
+  <p class="small" style="margin:6px 0 0">{{ x.tool.wheels|length }} wheels, packed as one archive. Archive SHA-256: <span class="mono hash">{{ x.tool.wheel_archive_sha256 }}</span></p>
+</div>
+<details class="noprint"><summary class="small">Show every wheel and its SHA-256</summary>
+  <table>{% for w in x.tool.wheels %}<tr><td class="mono">{{ w.name }}</td><td class="mono hash">{{ w.sha256 }}</td></tr>{% endfor %}</table>
+</details>
+
+<h2>Files</h2>
+<table>
+  <tr><th>Direction</th><th>File</th><th>SHA-256</th></tr>
+  {% for f in x.inputs %}<tr><td>in</td><td class="mono">{{ f.name }}{% if f.synthetic %} <span class="badge synthetic">Synthetic study data</span>{% endif %}</td><td class="mono hash">{{ f.sha256 }}</td></tr>{% endfor %}
+  {% for f in x.outputs %}<tr><td>out</td><td class="mono">{{ f.name }}</td><td class="mono hash">{{ f.sha256 }}</td></tr>{% endfor %}
+</table>
+
+<h2>The exact code that ran</h2>
+{% if x.code %}
+  <p class="small">SHA-256 of the runner: <span class="mono hash">{{ x.code.sha256 }}</span>. Written by <span class="mono">{{ x.agent.model }}</span>.</p>
+  <pre class="code">{{ x.code.text }}</pre>
+{% else %}<p class="small">No runner code was recorded.</p>{% endif %}
+
+<h2>Results</h2>
+{% if x.results %}
+  <table>
+    <tr><th>Compound</th><th>DILI (tool output)</th><th>Reference label</th></tr>
+    {% for row in x.results %}
+      <tr><td class="mono">{{ row.compound_id }}{% if row.reference_name %} ({{ row.reference_name }}){% endif %}</td>
+        <td class="mono">{{ "%.3f"|format(row.DILI|float) }}</td>
+        <td>{{ row.reference_label or "" }}</td></tr>
+    {% endfor %}
+  </table>
+  {% if x.reference %}
+    <p class="small">Reference labels: {{ x.reference.dataset }} (<a href="{{ x.reference.dataset_url }}">source</a>). {{ x.reference.caveat }}</p>
+  {% endif %}
+  <p class="small">The values are the tool's output as measured in this run. They are not a claim that the tool is accurate.</p>
+{% else %}<p class="small">No results were produced.</p>{% endif %}
+
+<h2>Agent</h2>
+<p class="small" style="margin-top:0">Model <span class="mono">{{ x.agent.model }}</span> on Vultr Serverless Inference{% if x.agent.fallback_used %} (fallback model used){% endif %}. The agent loop runs on the host: the inference key never enters a room. Tool output the agent read is sent to the endpoint.</p>
+<details class="noprint"><summary class="small">Show all {{ x.agent.steps|length }} recorded steps</summary>
+  <table>{% for s in x.agent.steps %}
+    <tr><td class="mono small">{{ s.t|hhmmss }}</td><td class="mono">{{ s.kind }} {{ s.name }}</td><td class="small">{{ s.args }} {{ s.result_excerpt }}</td></tr>
+  {% endfor %}</table>
+</details>
+
+{% if x.notes %}<h2>Notes</h2><ul>{% for n in x.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+
+<h2>What this receipt does not claim</h2>
+<ul class="honesty">{% for line in x.honesty %}<li>{{ line }}</li>{% endfor %}</ul>
+{% endblock %}

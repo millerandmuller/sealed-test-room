@@ -1,0 +1,75 @@
+:root {
+  --paper: #fbfaf7;
+  --ink: #1c1c1c;
+  --muted: #6a6f75;
+  --rule: #dcd9d1;
+  --accent: #4d5f70;
+  --red: #b3261e;
+  --red-bg: #fbeceb;
+  --green: #1b6e3c;
+  --green-bg: #e9f4ed;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 16px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+main { max-width: 1040px; margin: 0 auto; padding: 24px 24px 64px; }
+header.site { border-bottom: 1px solid var(--rule); padding: 14px 24px; }
+header.site a { color: var(--ink); text-decoration: none; font-weight: 600; letter-spacing: .02em; }
+h1 { font-size: 26px; margin: 8px 0 4px; }
+h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin: 28px 0 8px; }
+p.lede { color: var(--muted); margin-top: 0; }
+.mono, code, pre, td.mono { font-family: var(--mono); font-size: 13px; }
+.box { border: 1px solid var(--rule); background: #fff; padding: 14px 16px; border-radius: 4px; }
+.box h2 { margin-top: 0; }
+.badge {
+  display: inline-block; font: 600 12px/1 var(--mono); padding: 5px 8px; border-radius: 3px;
+  background: #ecebe6; color: var(--accent); letter-spacing: .03em;
+}
+.badge.synthetic { background: #fff4d6; color: #7a5a00; }
+.badge.sealed { background: #e6ecf2; color: #2f4256; }
+.badge.ok { background: var(--green-bg); color: var(--green); }
+.badge.bad { background: var(--red-bg); color: var(--red); }
+label { display: block; font-weight: 600; margin: 14px 0 4px; }
+input[type=text], input[type=file] { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 3px; font: inherit; background: #fff; }
+.choice { font-weight: 400; display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+button.primary {
+  margin-top: 20px; background: var(--ink); color: var(--paper); border: 0; border-radius: 3px;
+  padding: 11px 20px; font: 600 16px inherit; cursor: pointer;
+}
+button.primary:hover { background: #000; }
+.banner { padding: 12px 14px; border-radius: 3px; margin: 14px 0; border: 1px solid; }
+.banner.bad { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+.banner.ok { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+td.verdict { font: 700 13px var(--mono); white-space: nowrap; }
+td.verdict.BLOCKED { color: var(--red); }
+td.verdict.ALLOWED { color: var(--green); }
+tr.row-BLOCKED td:first-child { border-left: 4px solid var(--red); }
+tr.row-ALLOWED td:first-child { border-left: 4px solid var(--green); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+ul.steps { list-style: none; margin: 0; padding: 0; }
+ul.steps li { padding: 4px 0; border-bottom: 1px dotted var(--rule); font-size: 14px; }
+ul.steps li .t { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-right: 8px; }
+.destroy-line { font-family: var(--mono); font-size: 13px; margin: 4px 0; }
+.hash { word-break: break-all; }
+pre.code { background: #f4f2ec; border: 1px solid var(--rule); padding: 12px; overflow-x: auto; white-space: pre; }
+.small { font-size: 13px; color: var(--muted); }
+.honesty li { margin: 4px 0; }
+a.btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--ink); border-radius: 3px; color: var(--ink); text-decoration: none; margin-right: 8px; }
+.spinner { color: var(--muted); font-size: 14px; }
+
+@media print {
+  header.site, .noprint, details > summary { display: none; }
+  body { background: #fff; font-size: 11pt; }
+  main { max-width: none; padding: 0; }
+  details:not([open]) > * { display: none; }
+  .box { break-inside: avoid; }
+  pre.code { font-size: 8.5pt; }
+  @page { size: A4; margin: 14mm; }
+}

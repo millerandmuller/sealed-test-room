@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/millerandmuller/sealed-test-room/schemas/receipt.schema.json",
+  "title": "Sealed Test Room receipt",
+  "type": "object",
+  "required": ["schema_version", "run_id", "status", "started", "tool", "network", "rooms", "wall_check", "inputs", "outputs", "agent", "destroy", "honesty"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["running", "completed", "failed", "aborted"]},
+    "clean": {"type": "boolean", "description": "True only if completed, wall check passed and every room verified absent."},
+    "unclean_reasons": {"type": "array", "items": {"type": "string"}},
+    "started": {"type": "string"},
+    "finished": {"type": ["string", "null"]},
+    "error": {"type": ["string", "null"]},
+    "tool": {
+      "type": "object",
+      "required": ["spec", "version_installed", "wheels", "wheel_archive_sha256"],
+      "properties": {
+        "spec": {"type": ["string", "null"]},
+        "version_installed": {"type": ["string", "null"]},
+        "wheel_archive_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "wheels": {"type": "array", "items": {"type": "object", "required": ["name", "sha256"],
+          "properties": {"name": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}}
+      }
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "allowed_host": {"type": "string"},
+        "allowed_ip": {"type": "string"},
+        "allowed_port": {"type": "integer"},
+        "pinned_hosts": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "rooms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "policy", "created", "destroyed", "verified_absent"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"enum": ["download", "sealed"]},
+          "policy": {"type": "string"},
+          "created": {"type": "string"},
+          "destroyed": {"type": ["string", "null"]},
+          "verified_absent": {"type": ["string", "null"]},
+          "destroy_check": {"type": ["object", "null"]}
+        }
+      }
+    },
+    "wall_check": {
+      "type": "object",
+      "required": ["verdict", "rows"],
+      "properties": {
+        "verdict": {"enum": ["PASSED", "FAILED", null]},
+        "rows": {"type": "array", "items": {"type": "object", "required": ["host", "verdict", "ms"],
+          "properties": {"host": {"type": "string"}, "verdict": {"enum": ["ALLOWED", "BLOCKED"]},
+                         "ms": {"type": "integer"}, "detail": {"type": "string"}}}}
+      }
+    },
+    "inputs": {"type": "array", "items": {"type": "object", "required": ["name", "sha256", "synthetic"],
+      "properties": {"name": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "synthetic": {"type": "boolean"}}}},
+    "outputs": {"type": "array", "items": {"type": "object", "required": ["name", "sha256"],
+      "properties": {"name": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}},
+    "code": {"type": ["object", "null"], "properties": {"text": {"type": "string"}, "sha256": {"type": "string"}}},
+    "agent": {
+      "type": "object",
+      "required": ["model", "base_url", "runs_on", "steps"],
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "base_url": {"type": ["string", "null"]},
+        "fallback_used": {"type": "boolean"},
+        "runs_on": {"const": "host"},
+        "steps": {"type": "array", "items": {"type": "object", "required": ["t", "kind", "name"],
+          "properties": {"t": {"type": "string"}, "kind": {"enum": ["model", "tool", "phase"]}, "name": {"type": "string"},
+                         "args": {"type": "string"}, "result_excerpt": {"type": "string"}}}}
+      }
+    },
+    "results": {"type": "array", "items": {"type": "object", "required": ["compound_id", "DILI"],
+      "properties": {"compound_id": {"type": "string"}, "DILI": {"type": "string"},
+                     "reference_name": {"type": "string"}, "reference_label": {"type": "string"}}}},
+    "reference": {"type": ["object", "null"]},
+    "destroy": {
+      "type": "object",
+      "required": ["all_rooms_verified_absent"],
+      "properties": {"all_rooms_verified_absent": {"type": "boolean"}}
+    },
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "honesty": {"type": "array", "items": {"type": "string"}}
+  }
+}

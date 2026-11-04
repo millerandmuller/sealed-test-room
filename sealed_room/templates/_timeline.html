@@ -1,0 +1,56 @@
+<div data-status="{{ r.status }}">
+  <h1>Run {{ r.run_id }}
+    {% if r.status == "running" %}<span class="badge">RUNNING</span>
+    {% elif r.status == "completed" %}<span class="badge ok">COMPLETED</span>
+    {% else %}<span class="badge bad">{{ r.status|upper }}</span>{% endif %}
+  </h1>
+  <p class="lede">Tool <span class="mono">{{ r.tool.spec or "..." }}</span> &middot; started {{ r.started|hhmmss }} UTC</p>
+
+  {% if r.error %}<div class="banner bad">{{ r.error }}</div>{% endif %}
+
+  <div class="cols">
+    <div>
+      <h2>Rooms</h2>
+      {% for room in r.rooms %}
+        <div class="box" style="margin-bottom:10px">
+          <span class="badge {{ 'sealed' if room.kind == 'sealed' else '' }}">{{ room.kind|upper }} ROOM</span>
+          <span class="mono">{{ room.id }}</span>
+          <div class="mono small hash" style="margin-top:6px">{{ room.policy }}</div>
+        </div>
+      {% else %}<p class="small">No room yet.</p>{% endfor %}
+
+      <h2>Wall check</h2>
+      {% if r.wall_check %}
+        <table>
+          {% for w in r.wall_check %}
+          <tr class="row-{{ w.verdict }}">
+            <td class="mono">{{ w.host }}</td>
+            <td class="verdict {{ w.verdict }}">{{ w.verdict }}</td>
+            <td class="small">{% if w.verdict == "BLOCKED" %}refused at the room gateway, {{ w.ms }} ms{% else %}answered, {{ w.ms }} ms{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% elif r.status == "running" %}<p class="spinner">Waiting for the sealed room.</p>
+      {% else %}<p class="small">The wall check did not run.</p>{% endif %}
+
+      {% for room in r.rooms if room.destroyed %}
+        <p class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }}
+          {% if room.verified_absent %}&middot; verified absent {{ room.verified_absent|hhmmss }}
+          {% else %}&middot; <strong style="color:var(--red)">STILL LISTED</strong>{% endif %}</p>
+      {% endfor %}
+    </div>
+
+    <div>
+      <h2>What the agent is doing</h2>
+      <ul class="steps">
+        {% for s in r.steps[-10:] %}
+          <li><span class="t">{{ s.t|hhmmss }}</span>{{ s|step_line }}</li>
+        {% else %}<li class="small">Starting.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  {% if r.status != "running" %}
+    <p style="margin-top:24px"><a class="btn" href="/runs/{{ r.run_id }}/receipt">Open the receipt</a></p>
+  {% endif %}
+</div>

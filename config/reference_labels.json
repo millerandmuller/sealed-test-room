@@ -1,0 +1,10 @@
+{
+  "applies_to": "demo-data/study_synthetic.csv",
+  "dataset": "FDA DILIrank 2.0",
+  "dataset_url": "https://www.fda.gov/science-research/liver-toxicity-knowledge-base-ltkb/drug-induced-liver-injury-rank-dilirank-dataset",
+  "compounds": [
+    {"compound_id": "C01", "name": "troglitazone", "label": "Most-DILI-concern (withdrawn)"},
+    {"compound_id": "C02", "name": "chlorpheniramine", "label": "No-DILI-concern"}
+  ],
+  "caveat": "The tool's value is recorded as measured. Two reference compounds are not evidence that the tool generalises, and they may be in its training data."
+}

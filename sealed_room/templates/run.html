@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Run {{ r.run_id }} - Sealed Test Room{% endblock %}
+{% block body %}
+<div id="timeline">{% include "_timeline.html" %}</div>
+<script>
+  (function () {
+    var box = document.getElementById("timeline");
+    function poll() {
+      var root = box.querySelector("[data-status]");
+      if (root && root.getAttribute("data-status") !== "running") { return; }
+      fetch("/runs/{{ r.run_id }}/fragment", { cache: "no-store" })
+        .then(function (res) { return res.text(); })
+        .then(function (html) { box.innerHTML = html; setTimeout(poll, 2000); })
+        .catch(function () { setTimeout(poll, 2000); });
+    }
+    setTimeout(poll, 2000);
+  })();
+</script>
+{% endblock %}
