@@ -46,5 +46,5 @@
   <text x="569" y="282" text-anchor="middle" font-size="11" fill="#52606d">5</text>
 
   <text x="36" y="378" font-size="12" fill="#1f2933">Everything else from the sealed room (package index, Git host, any other address) is refused, and the wall check shows it before any data enters.</text>
-  <text x="36" y="398" font-size="12" fill="#1f2933">The key reaches the room only on the standard input of the one command that makes step 4. Study data never enters a room with internet access.</text>
+  <text x="36" y="398" font-size="12" fill="#1f2933">The key reaches the room only on the standard input of the one command that makes step 4. Study data is copied only into the sealed room, after the wall check.</text>
 </svg>

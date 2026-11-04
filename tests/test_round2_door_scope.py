@@ -156,7 +156,7 @@ def test_completed_run_without_a_successful_door_call_is_not_clean():
 def test_old_sentence_is_gone_from_the_source():
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent
-    hits = [str(p) for p in root.rglob("*") if p.is_file() and p.suffix in {".py", ".html", ".md", ".json"}
+    hits = [str(p) for p in root.rglob("*") if p.is_file() and p.suffix in {".py", ".html", ".md", ".json", ".svg"}
             and ".git" not in p.parts and "tests" not in p.parts and "never enters a room" in p.read_text(errors="ignore")]
     assert hits == []
 
