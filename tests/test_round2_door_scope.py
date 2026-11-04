@@ -183,3 +183,13 @@ def test_encoded_key_in_room_output_is_discarded(runner, tmp_path, smuggle):
         run_door_call(Msb("msb", runner), "sr-abcd", record, key=KEY, url=URL, allowed_host="api.vultrinference.com",
                       models=["m"], expected_rows=12, timeout_s=10)
     assert record.snapshot()["door"] is None
+
+
+@pytest.mark.parametrize("key", ["a" * 41, "b" * 42, "c" * 43, "Zk9-" * 9])
+@pytest.mark.parametrize("prefix", [b"", b"x", b"xy", b'{"k":"'])
+@pytest.mark.parametrize("suffix", [b"", b"y", b"yz", b'"}'])
+def test_base64_wrapped_key_is_caught_for_any_alignment(key, prefix, suffix):
+    import base64
+    from sealed_room.door import _carries_key
+    for encode in (base64.b64encode, base64.urlsafe_b64encode):
+        assert _carries_key("OK " + encode(prefix + key.encode() + suffix).decode(), key)

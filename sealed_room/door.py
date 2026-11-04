@@ -121,14 +121,16 @@ def _clean_call(call: dict, host: str) -> dict:
 
 
 def _key_forms(key: str) -> set[str]:
-    """The key as it could be smuggled out: plain, reversed, hex, base64 (standard and url-safe, any alignment), percent-encoded."""
+    """The key as it could be smuggled out: plain, reversed, hex, base64 (standard and url-safe, any alignment). Best effort:
+    a finite list cannot cover every encoding; the real defence is that nothing but the stdlib runs in that command."""
     raw = key.encode()
     forms = {key, key[::-1], binascii.hexlify(raw).decode()}
     for offset in range(3):  # base64 alignment depends on what precedes the key
         padded = b"x" * offset + raw
         for encode in (base64.b64encode, base64.urlsafe_b64encode):
             text = encode(padded).decode().rstrip("=")
-            forms.add(text[4:] if offset else text)  # drop the chars the filler contributes
+            # Drop the characters the filler contributes at the front and the last group, whose letters depend on the next byte.
+            forms.add(text[4 if offset else 0:-4])
     return {f for f in forms if len(f) >= 8}
 
 
