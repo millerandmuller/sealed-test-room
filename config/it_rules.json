@@ -1,0 +1,19 @@
+{
+  "allowed_host": "api.vultrinference.com",
+  "allowed_port": 443,
+  "wall_check": {
+    "timeout_s": 5,
+    "expect_blocked": ["pypi.org", "github.com"],
+    "expect_allowed": ["api.vultrinference.com"]
+  },
+  "room": {
+    "image": "python:3.12",
+    "cpus": 2,
+    "memory_mb": 4096
+  },
+  "caps": {
+    "tool_run_s": 600,
+    "whole_run_s": 900,
+    "max_agent_steps": 25
+  }
+}
