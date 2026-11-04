@@ -91,7 +91,20 @@ def test_copy_out_refuses_paths_outside_work(msb, runner, record, tmp_path, path
     assert not any(c[1] == "copy" for c in runner.calls)
 
 
+def test_copy_out_refuses_symlink_that_leads_outside_work(msb, runner, record, tmp_path):
+    runner.reply("readlink -e /work/link.csv", stdout="/etc/shadow\n")
+    reply = session(msb, record, tmp_path).room_copy_out("/work/link.csv")
+    assert reply.startswith("REFUSED") and "does not resolve" in reply
+    assert not any(c[1] == "copy" for c in runner.calls)
+
+
+def test_copy_out_refuses_dangling_link(msb, runner, record, tmp_path):
+    runner.reply("readlink -e", code=1)
+    assert session(msb, record, tmp_path).room_copy_out("/work/gone.csv").startswith("REFUSED")
+
+
 def test_copy_out_checks_hash_after_copy(msb, runner, record, tmp_path):
+    runner.reply("readlink -e /work/results.csv", stdout="/work/results.csv\n")
     runner.reply("sha256sum /work/results.csv", stdout=("1" * 64) + "  /work/results.csv")
     out = tmp_path / "out"
     out.mkdir()

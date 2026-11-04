@@ -12,13 +12,18 @@ from .orchestrator import RunRequest, execute_run
 from .runrecord import RunRecord
 
 
-def new_run_id() -> str:
-    return secrets.token_hex(2)
+def new_run_id(runs_dir: Path) -> str:
+    """A 4-hex id that no earlier run directory uses, so a new run can never overwrite an old receipt."""
+    for _ in range(100):
+        candidate = secrets.token_hex(2)
+        if not (runs_dir / candidate).exists():
+            return candidate
+    raise RuntimeError("run id space is exhausted; archive old runs")
 
 
 def prepare_run(settings: Settings, tool: str, study_source: Path, display_name: str, synthetic: bool) -> tuple[RunRequest, RunRecord]:
     """Create the run directory and a private copy of the study file, so later edits to the source cannot change the run."""
-    run_id = new_run_id()
+    run_id = new_run_id(settings.runs_dir)
     record = RunRecord(run_id, settings.runs_dir)
     study_copy = record.dir / "study.csv"
     shutil.copyfile(study_source, study_copy)
@@ -28,5 +33,10 @@ def prepare_run(settings: Settings, tool: str, study_source: Path, display_name:
 
 def run_to_completion(settings: Settings, request: RunRequest, record: RunRecord) -> None:
     msb = Msb(settings.msb_bin)
-    infer = Inference(settings, on_fallback=lambda model: record.update_model(fallback_used=True, name=model))
+    try:
+        infer = Inference(settings, on_fallback=lambda model: record.update_model(fallback_used=True, name=model))
+    except Exception as exc:  # e.g. no API key on this host: end the run visibly before any room exists
+        record.add_step("phase", "finished", "", f"status failed: {exc}")
+        record.finish("failed", f"{type(exc).__name__}: {exc}")
+        return
     execute_run(settings, msb, infer, request, record)

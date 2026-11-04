@@ -40,6 +40,12 @@ def copy_result_out(msb: Msb, room_id: str, room_path: str, dest_dir: Path, reco
     clean = posixpath.normpath(room_path)
     if not clean.startswith(WORK_DIR + "/"):
         raise TransferError(f"only files under {WORK_DIR}/ can leave the room (asked for {room_path!r})")
+    # A symlink inside /work could point anywhere in the room: ask the room where the path really leads.
+    real = msb.exec(room_id, ["readlink", "-e", clean], 30)
+    resolved = real.stdout.strip()
+    if not real.ok or not resolved.startswith(WORK_DIR + "/"):
+        raise TransferError(f"{room_path!r} does not resolve to a file under {WORK_DIR}/")
+    clean = resolved
     room_sha = _room_sha(msb, room_id, clean)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / posixpath.basename(clean)

@@ -33,6 +33,17 @@ def unclean_reasons(record: dict) -> list[str]:
     for room in rooms:
         if not room.get("verified_absent"):
             reasons.append(f"room {room['id']} was not proven absent")
+    kinds = {room["kind"] for room in rooms}
+    if not {"download", "sealed"} <= kinds:
+        reasons.append("the record lacks a download room or a sealed room")
+    if len(record.get("wall_check", [])) < 3:
+        reasons.append("the wall check has fewer than three rows")
+    if not record.get("inputs"):
+        reasons.append("no input file hash was recorded")
+    if not record.get("outputs"):
+        reasons.append("no output file hash was recorded")
+    if not record.get("results_preview"):
+        reasons.append("the results were not verified")
     return reasons
 
 

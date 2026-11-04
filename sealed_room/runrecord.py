@@ -100,8 +100,9 @@ class RunRecord:
             self._save_locked()
 
     def add_output(self, entry: dict) -> None:
+        """One entry per file name: copying the same name out again replaces the earlier hash, which is now stale."""
         with self._lock:
-            self._data["outputs"].append(entry)
+            self._data["outputs"] = [o for o in self._data["outputs"] if o["name"] != entry["name"]] + [entry]
             self._save_locked()
 
     def finish(self, status: str, error: str | None = None) -> None:
@@ -128,6 +129,26 @@ class RunRecord:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(self._data, indent=2))
         os.replace(tmp, path)
+
+
+def reconcile_stale_runs(runs_dir: Path) -> list[str]:
+    """Mark records still "running" as aborted. Call only at startup, when no run thread can exist.
+
+    A killed process (power loss, SIGKILL after a stop timeout) never reaches `finish`, and the live
+    page would poll such a run forever. Returns the run ids that were reconciled.
+    """
+    fixed: list[str] = []
+    for path in sorted(Path(runs_dir).glob("*/run.json")):
+        data = json.loads(path.read_text())
+        if data.get("status") != "running":
+            continue
+        data.update(status="aborted", finished=now_iso(),
+                    error="The service stopped during this run. Its rooms were removed at the next start.")
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        os.replace(tmp, path)
+        fixed.append(data["run_id"])
+    return fixed
 
 
 def load_record(runs_dir: Path, run_id: str) -> dict | None:

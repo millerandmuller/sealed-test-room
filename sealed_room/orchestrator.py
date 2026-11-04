@@ -15,13 +15,12 @@ from typing import Callable
 from .agent import SealedSession, run_agent
 from .config import HONESTY_LINES, Settings
 from .hashing import sha256_text
-from .inference import Inference, InferenceError
-from .intake import validate_study
-from .msb import Msb, MsbError
-from .rooms import Room, RoomManager, RoomStillListed
+from .inference import Inference
+from .intake import normalized_header, validate_study
+from .msb import Msb
+from .rooms import Room, RoomManager
 from .runrecord import RunRecord
 from .toolinstall import ToolInstallError, fetch_wheels, install_offline, resolve_tool
-from .transfer import TransferError
 from .wallcheck import WallCheckFailed, evaluate, pins_for, resolve_ipv4, run_wall_check
 
 
@@ -59,7 +58,7 @@ def execute_run(
         status, error = "failed", f"Wall check failed: room not sealed. {exc}"
     except RunAborted as exc:
         status, error = "aborted", str(exc)
-    except (ToolInstallError, TransferError, InferenceError, MsbError, RuntimeError, ValueError, OSError) as exc:
+    except Exception as exc:  # last resort: no path may leave a run at "running"
         status, error = "failed", f"{type(exc).__name__}: {exc}"
     finally:
         problems = rooms.close_all()
@@ -78,6 +77,12 @@ def _check_clock(deadline: float) -> None:
         raise RunAborted("Run exceeded its time cap; rooms were destroyed.")
 
 
+def _budget(deadline: float, wanted_s: int) -> int:
+    """Seconds a step may take: what it asks for, but never past the whole-run deadline."""
+    _check_clock(deadline)
+    return max(10, min(wanted_s, int(deadline - time.monotonic())))
+
+
 def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) -> None:
     rows = validate_study(request.study_path)
     tool = resolve_tool(request.tool)
@@ -85,7 +90,7 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     run_dir = record.dir
 
     _phase(record, "download room", "Opening a download room (no study data inside) to fetch the tool.")
-    fetched = _fetch_with_retry(msb, rooms, record, request.run_id, tool, run_dir, settings)
+    fetched = _fetch_with_retry(msb, rooms, record, request.run_id, tool, run_dir, deadline)
     _check_clock(deadline)
 
     allowed = settings.allowed_host
@@ -97,7 +102,7 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     _phase(record, "sealed room", f"Sealed room open. Policy: {sealed.policy}")
 
     started = time.monotonic()
-    version = install_offline(msb, sealed.id, fetched["archive"], fetched["archive_sha256"], tool["spec"], 300)
+    version = install_offline(msb, sealed.id, fetched["archive"], fetched["archive_sha256"], tool["spec"], _budget(deadline, 300))
     record.update_tool(version_installed=version)
     _phase(record, "offline install", f"{tool['spec']} installed offline, version {version} ({int(time.monotonic() - started)} s).")
     _check_clock(deadline)
@@ -122,12 +127,12 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     record.update(honesty=_honesty_lines(request.synthetic))
 
 
-def _fetch_with_retry(msb, rooms: RoomManager, record, run_id, tool, run_dir: Path, settings) -> dict:
+def _fetch_with_retry(msb, rooms: RoomManager, record, run_id, tool, run_dir: Path, deadline: float) -> dict:
     last: ToolInstallError | None = None
     for attempt in (1, 2):
         room = rooms.open_download(run_id, attempt)
         try:
-            fetched = fetch_wheels(msb, room.id, tool, run_dir, 1200)
+            fetched = fetch_wheels(msb, room.id, tool, run_dir, _budget(deadline, 600))
             record.update_tool(wheels=fetched["wheels"], wheel_archive_sha256=fetched["archive_sha256"])
             _phase(record, "tool fetched", f"{len(fetched['wheels'])} wheels fetched and hashed; the download room is removed next.")
             return fetched
@@ -160,17 +165,22 @@ def _verify_results(study_path: Path, results_path: Path, record: RunRecord) -> 
     """Check the output ourselves instead of trusting the agent: one row per input compound, a DILI column."""
     if not results_path.is_file():
         raise RuntimeError("The agent finished without copying results.csv out.")
-    with study_path.open(newline="", encoding="utf-8-sig") as fh:
-        wanted = [row["compound_id"] for row in csv.DictReader(fh)]
-    with results_path.open(newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        got = list(reader)
-        columns = reader.fieldnames or []
-    if "DILI" not in columns:
+    wanted = [row["compound_id"] for row in _read_rows(study_path)]
+    got = _read_rows(results_path)
+    if not got or "DILI" not in got[0]:
         raise RuntimeError("results.csv has no DILI column.")
     if [row.get("compound_id") for row in got] != wanted:
         raise RuntimeError(f"results.csv has {len(got)} rows that do not match the {len(wanted)} input compounds.")
     record.update(results_preview=[{"compound_id": row["compound_id"], "DILI": row["DILI"]} for row in got])
+
+
+def _read_rows(path: Path) -> list[dict]:
+    """Rows keyed by normalized header names (same rule as intake), except the tool's own DILI column keeps its case."""
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        reader = csv.reader(fh)
+        header = next(reader, [])
+        names = [h.strip() if h.strip() == "DILI" else normalized_header([h])[0] for h in header]
+        return [dict(zip(names, row)) for row in reader if row]
 
 
 def _honesty_lines(synthetic: bool) -> list[str]:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -12,12 +13,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .config import Settings, load_settings
-from .intake import IntakeError, validate_study
+from .intake import MAX_BYTES, IntakeError, validate_study
 from .msb import Msb
 from .receipt import build_receipt, load_reference, validate_receipt
 from .rooms import cleanup_orphans
-from .runrecord import load_record
+from .runrecord import load_record, reconcile_stale_runs
 from .service import prepare_run, run_to_completion
+from .toolinstall import ToolInstallError, resolve_tool
 
 HERE = Path(__file__).resolve().parent
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4}$")
@@ -53,7 +55,7 @@ def step_line(step: dict) -> str:
 def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAPI:
     """Build the app. Run with `uvicorn sealed_room.web:create_app --factory`. `cleanup=False` is for tests without msb."""
     settings = settings or load_settings()
-    app = FastAPI(title="Sealed Test Room")
+    app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters.update(hhmmss=hhmmss, step_line=step_line)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
@@ -61,6 +63,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
     if cleanup:
         cleanup_orphans(Msb(settings.msb_bin))
+        reconcile_stale_runs(settings.runs_dir)  # no run thread exists yet, so any "running" record is stale
 
     def intake_context(request: Request, error: str | None = None) -> dict:
         return {"rules": settings.rules, "error": error, "demo_rows": 12}
@@ -77,25 +80,34 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         synthetic: str = Form(""),
         study: UploadFile | None = File(None),
     ):
-        staged = settings.runs_dir / "_upload.csv"
+        try:
+            resolve_tool(tool)
+        except ToolInstallError as exc:
+            return _intake_error(templates, intake_context, request, str(exc))
+        staged: Path | None = None
         if source == "upload":
             if study is None or not study.filename:
                 return _intake_error(templates, intake_context, request, "Choose a study file or use the synthetic demo study.")
-            staged.write_bytes(await study.read())
+            data = await study.read(MAX_BYTES + 1)  # never hold more than the limit plus one byte
+            staged = _stage_upload(settings.runs_dir, data)
             source_path, display, is_synthetic = staged, Path(study.filename).name, synthetic == "yes"
         else:
             source_path, display, is_synthetic = settings.demo_study_path, settings.demo_study_path.name, True
         try:
             validate_study(source_path)
         except IntakeError as exc:
+            _discard(staged)
             return _intake_error(templates, intake_context, request, str(exc))
         if not run_lock.acquire(blocking=False):
+            _discard(staged)
             return _intake_error(templates, intake_context, request, "A sealed run is in progress. Wait for it to finish.", 409)
         try:
             run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic)
         except Exception:
             run_lock.release()
             raise
+        finally:
+            _discard(staged)  # the run keeps its own private copy
 
         def work() -> None:
             try:
@@ -142,6 +154,20 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         return {"ok": True}
 
     return app
+
+
+def _stage_upload(runs_dir: Path, data: bytes) -> Path:
+    """Write an upload under a name no other request can share."""
+    staging = runs_dir / "_staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=staging, suffix=".csv", delete=False) as fh:
+        fh.write(data)
+        return Path(fh.name)
+
+
+def _discard(path: Path | None) -> None:
+    if path is not None:
+        path.unlink(missing_ok=True)
 
 
 def _intake_error(templates, intake_context, request: Request, message: str, status: int = 400):

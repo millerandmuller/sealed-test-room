@@ -12,6 +12,11 @@ class IntakeError(ValueError):
     """A message safe to show the scientist as is."""
 
 
+def normalized_header(header: list[str]) -> list[str]:
+    """The one rule for column names: trimmed and lower-cased. Intake and result checks both use it."""
+    return [h.strip().lower() for h in header]
+
+
 def validate_study(path: Path) -> int:
     """Return the number of data rows, or raise IntakeError."""
     if not path.is_file() or path.stat().st_size == 0:
@@ -25,7 +30,9 @@ def validate_study(path: Path) -> int:
     rows = list(csv.reader(text.splitlines()))
     if len(rows) < 2:
         raise IntakeError("The study file has a header but no compounds.")
-    header = [h.strip().lower() for h in rows[0]]
+    header = normalized_header(rows[0])
+    if len(set(header)) != len(header):
+        raise IntakeError("The study file has a duplicated column name.")
     if "smiles" not in header:
         raise IntakeError("The study file needs a column named 'smiles'.")
     if "compound_id" not in header:

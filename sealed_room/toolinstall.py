@@ -16,6 +16,9 @@ from .msb import Msb, MsbError
 _SPEC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(==[A-Za-z0-9.!+_-]+)?$")
 
 
+MAX_SPEC_LEN = 100
+
+
 class ToolInstallError(RuntimeError):
     pass
 
@@ -28,7 +31,7 @@ def resolve_tool(requested: str) -> dict:
     the build step would run unreviewed setup code outside the sealed room.
     """
     requested = requested.strip()
-    if not _SPEC_RE.match(requested):
+    if len(requested) > MAX_SPEC_LEN or not _SPEC_RE.match(requested):
         raise ToolInstallError(
             "Tool must be a package name such as 'admet-ai' (optionally 'name==version'). Git URLs are not supported."
         )
