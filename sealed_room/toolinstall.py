@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .config import TOOL_PROFILES
+from .config import APPROVED_TOOL_LABEL, APPROVED_TOOL_NAMES, TOOL_PROFILES
 from .hashing import sha256_file
 from .msb import Msb, MsbError
 
@@ -21,6 +21,12 @@ MAX_SPEC_LEN = 100
 
 class ToolInstallError(RuntimeError):
     pass
+
+
+def check_approved(requested: str) -> None:
+    """Only IT's approved tool may start a run. Called before any run directory or room exists."""
+    if requested.strip() not in APPROVED_TOOL_NAMES:
+        raise ToolInstallError(f"Only {APPROVED_TOOL_LABEL} is on this demo's approved list. Other tools are not on the list yet.")
 
 
 def resolve_tool(requested: str) -> dict:

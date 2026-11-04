@@ -9,7 +9,8 @@
   {% if r.status != "running" and (r.finished|minutes_since) > 3 %}
     <div class="banner" style="border-color:var(--rule);background:#fff">Recorded run. This page shows the stored record of a real run that started {{ r.started|stamp }} UTC; it is not a live run.</div>
   {% endif %}
-  {% if r.error %}<div class="banner bad">{{ r.error }}</div>{% endif %}
+  {% if r.error %}<div class="banner bad">{{ r.error|plain_failure }}
+    <details class="noprint" style="margin-top:6px"><summary class="small">Technical detail</summary><pre class="code" style="white-space:pre-wrap">{{ r.error }}</pre></details></div>{% endif %}
 
   <div class="cols">
     <div>

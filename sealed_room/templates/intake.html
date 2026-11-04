@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block body %}
 <h1>A new tool, your study data, one door.</h1>
-<p class="lede">Name the tool and hand over the study file. An agent sets it up in a sealed room, runs it, and gives you a receipt IT can read.</p>
+<p class="lede">Hand over the study file. An agent sets it up in a sealed room, runs it, and gives you a receipt IT can read.</p>
 
 {% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
 
@@ -12,8 +12,10 @@
 </div>
 
 <form method="post" action="/runs" enctype="multipart/form-data" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Starting...';">
-  <label for="tool">Tool (package name)</label>
-  <input type="text" id="tool" name="tool" value="admet-ai" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*(==[A-Za-z0-9.!+_\-]+)?">
+  <label>Tool</label>
+  <p class="box" style="margin:0 0 8px"><span class="mono">{{ approved_tool }}</span> <span class="small">(the one tool on this demo's approved list)</span></p>
+  <input type="hidden" name="tool" value="admet-ai">
+  <p class="small" style="margin:0 0 10px">Other tools are not on the approved list yet.</p>
 
   <label>Study file</label>
   <label class="choice"><input type="radio" name="source" value="demo" checked>

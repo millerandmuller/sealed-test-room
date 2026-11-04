@@ -16,14 +16,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .config import Settings, load_settings
+from .config import APPROVED_TOOL_LABEL, Settings, load_settings
+from .failure_words import plain_failure
 from .intake import MAX_BYTES, IntakeError, validate_study
 from .msb import Msb
 from .receipt import build_receipt, load_reference, validate_receipt
 from .rooms import cleanup_orphans
 from .runrecord import load_record, reconcile_stale_runs
 from .service import prepare_run, run_to_completion
-from .toolinstall import ToolInstallError, resolve_tool
+from .toolinstall import ToolInstallError, check_approved
 
 HERE = Path(__file__).resolve().parent
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4}$")
@@ -84,7 +85,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     settings = settings or load_settings()
     app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.filters.update(hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since, seconds_since=seconds_since)
+    templates.env.filters.update(plain_failure=plain_failure, hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since, seconds_since=seconds_since)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     run_lock = threading.Lock()
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +111,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         return templates.TemplateResponse(request, "access.html", {"error": message}, status_code=status)
 
     def intake_context(request: Request, error: str | None = None) -> dict:
-        return {"rules": settings.rules, "error": error, "demo_rows": 12}
+        return {"rules": settings.rules, "error": error, "demo_rows": 12, "approved_tool": APPROVED_TOOL_LABEL}
 
     @app.post("/access")
     def enter_code(request: Request, code: str = Form("")):
@@ -119,7 +120,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             time.sleep(WRONG_CODE_DELAY_S)  # slows guessing; the code itself is long and random
             return access_page(request, "That access code is not right.", 401)
         reply = RedirectResponse("/", status_code=303)
-        reply.set_cookie(ACCESS_COOKIE, access_token(expected), max_age=ACCESS_COOKIE_MAX_AGE_S, httponly=True, samesite="lax")
+        reply.set_cookie(ACCESS_COOKIE, access_token(expected), max_age=ACCESS_COOKIE_MAX_AGE_S, httponly=True, samesite="lax",
+                         secure=request.url.scheme == "https")  # behind the TLS proxy uvicorn reads X-Forwarded-Proto
         return reply
 
     @app.get("/", response_class=HTMLResponse)
@@ -141,7 +143,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         if (blocked := gate(request)) is not None:
             return blocked  # wrong or missing code: no run directory, no room
         try:
-            resolve_tool(tool)
+            check_approved(tool)  # before any run directory or room exists
         except ToolInstallError as exc:
             return _intake_error(templates, intake_context, request, str(exc))
         staged: Path | None = None

@@ -29,6 +29,18 @@ TOOL_PROFILES: dict[str, dict] = {
     },
 }
 
+# The one tool IT has approved for this demo (F14). The intake shows it as text; /runs rejects anything else.
+APPROVED_TOOL_LABEL = "admet-ai 2.0.1"
+APPROVED_TOOL_NAMES = frozenset({"admet-ai", "admet-ai==2.0.1"})
+
+# What actually happens to the inference key (F15). One sentence, used by the receipt JSON and the receipt page.
+KEY_HANDLING = (
+    "The agent loop runs on the host. The inference key is never in the room while the tool runs. For the single "
+    "result-verification call it is passed on the standard input of that one command (not in the environment, not on the "
+    "command line, not written to the room's disk), the room can reach only the inference endpoint, and the room is "
+    "destroyed afterwards."
+)
+
 HONESTY_LINES = {
     "synthetic": "Study data in this run is synthetic.",
     "not_validated": "This run is not a validated or GLP-compliant process.",
