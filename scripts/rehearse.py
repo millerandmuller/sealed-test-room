@@ -37,16 +37,19 @@ def one_run(client: httpx.Client, runs_dir: Path, msb_bin: str, cap_s: int) -> l
     if res.status_code != 303:
         return [f"start failed: HTTP {res.status_code}"]
     run_id = res.headers["location"].rsplit("/", 1)[1]
+    first_rows = None
     while time.monotonic() - started < cap_s + 60:
         frag = client.get(f"/runs/{run_id}/fragment").text
+        if first_rows is None and "row-BLOCKED" in frag and "row-ALLOWED" in frag:
+            first_rows = int(time.monotonic() - started)
         if 'data-status="running"' not in frag:
             break
-        time.sleep(2)
+        time.sleep(1)
     else:
         return [f"run {run_id} still running after the cap"]
     elapsed = int(time.monotonic() - started)
     receipt = client.get(f"/runs/{run_id}/receipt.json").json()
-    print(f"  run {run_id}: {receipt['status']} in {elapsed}s, clean={receipt['clean']}")
+    print(f"  run {run_id}: {receipt['status']} in {elapsed}s, wall-check rows visible at {first_rows}s, clean={receipt['clean']}")
     if not receipt["clean"]:
         problems.append(f"receipt not clean: {receipt['unclean_reasons']}")
     problems += [f"schema: {p}" for p in validate_receipt(receipt)]
