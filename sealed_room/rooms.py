@@ -99,8 +99,8 @@ class RoomManager:
         for room in list(self._rooms.values()):
             try:
                 self.close(room)
-            except (RoomStillListed, MsbError) as exc:
-                problems.append(str(exc))
+            except Exception as exc:  # any failure here must become a visible problem, never an unfinished run
+                problems.append(f"{type(exc).__name__}: {exc}")
         return problems
 
     def _open(self, name: str, kind: str, net_args: list[str], pins: dict[str, str]) -> Room:

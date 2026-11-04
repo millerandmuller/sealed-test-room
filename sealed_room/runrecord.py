@@ -139,8 +139,13 @@ def reconcile_stale_runs(runs_dir: Path) -> list[str]:
     """
     fixed: list[str] = []
     for path in sorted(Path(runs_dir).glob("*/run.json")):
-        data = json.loads(path.read_text())
-        if data.get("status") != "running":
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, dict) or data.get("status") != "running":
+                continue
+        except (ValueError, OSError):
+            # One unreadable record must not stop the service from starting or the others from being reconciled.
+            path.rename(path.with_suffix(".json.corrupt"))
             continue
         data.update(status="aborted", finished=now_iso(),
                     error="The service stopped during this run. Its rooms were removed at the next start.")
@@ -155,4 +160,8 @@ def load_record(runs_dir: Path, run_id: str) -> dict | None:
     path = Path(runs_dir) / run_id / "run.json"
     if not path.is_file():
         return None
-    return json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return None  # an unreadable record is shown as "no such run", not as a server error
+    return data if isinstance(data, dict) else None

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 
+HOST_TIMEOUT_CODE = 124  # what subprocess_runner reports when the host-side timeout fires
 COPY_RETRIES = 2
 COPY_RETRY_PAUSE_S = 1.0
 
@@ -102,12 +103,12 @@ class Msb:
         """Large copies sometimes fail once with "bulk transfer cancelled" (seen in 1 of 5 demo runs); try again."""
         result = self._run(argv, 600)
         for _attempt in range(COPY_RETRIES):
-            if result.ok:
-                return result
+            if result.ok or result.code == HOST_TIMEOUT_CODE:  # a hung copy is not retried: the run clock matters more
+                break
             time.sleep(COPY_RETRY_PAUSE_S)
             result = self._run(argv, 600)
         if not result.ok:
-            raise MsbError(f"msb copy {what} failed after {COPY_RETRIES + 1} attempts: {result.stderr.strip()}")
+            raise MsbError(f"msb copy {what} failed: {result.stderr.strip()}")
         return result
 
     def remove(self, name: str) -> CmdResult:

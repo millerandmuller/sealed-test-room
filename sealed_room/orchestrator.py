@@ -63,7 +63,8 @@ def execute_run(
     finally:
         problems = rooms.close_all()
     if problems:
-        status, error = "failed", "Room cleanup problem: " + "; ".join(problems)
+        cleanup = "Room cleanup problem: " + "; ".join(problems)
+        status, error = "failed", f"{error} | {cleanup}" if error else cleanup  # keep the original cause
     record.add_step("phase", "finished", "", f"status {status}" + (f": {error}" if error else ""))
     record.finish(status, error)
 
@@ -110,6 +111,7 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     started = time.monotonic()
     version = install_offline(msb, sealed.id, fetched["archive"], fetched["archive_sha256"], tool["spec"], _budget(deadline, 300))
     record.update_tool(version_installed=version)
+    fetched["archive"].unlink(missing_ok=True)  # 400 MB per run; the receipt keeps its hash
     _phase(record, "offline install", f"{tool['spec']} installed offline, version {version} ({int(time.monotonic() - started)} s).")
     _check_clock(deadline)
 

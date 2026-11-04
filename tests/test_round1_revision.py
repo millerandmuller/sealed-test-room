@@ -27,7 +27,7 @@ def test_copy_succeeds_after_one_transient_failure(msb, runner):
 
 def test_copy_gives_up_after_three_attempts(msb, runner):
     runner.copy_failures_left = 99
-    with pytest.raises(MsbError, match="3 attempts"):
+    with pytest.raises(MsbError, match="bulk transfer cancelled"):
         msb.copy_in("/tmp/x", "sr-ab12", "/work/x")
     assert sum(1 for c in runner.calls if c[1] == "copy") == 3
 
@@ -179,7 +179,6 @@ def test_receipt_prints_fda_url_names_endpoint_and_puts_results_above_code(clien
     assert page.index("<h2>Results</h2>") < page.index("The exact code that ran")
 
 
-def test_busy_redirect_shows_a_message_and_is_not_a_post_target(client):
+def test_busy_message_is_not_shown_when_no_run_holds_the_lock(client):
     c, _ = client
-    page = c.get("/?busy=1").text
-    assert "A sealed run is in progress" in page
+    assert "A sealed run is in progress" not in c.get("/?busy=1").text

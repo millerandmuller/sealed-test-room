@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sealed_room import orchestrator
 from sealed_room.config import load_settings
 from sealed_room.intake import IntakeError, validate_study
+from sealed_room.msb import MsbError
 from sealed_room.orchestrator import RunAborted, RunRequest, _budget, _verify_results, execute_run
 from sealed_room.receipt import build_receipt, unclean_reasons
 from sealed_room.runrecord import RunRecord, load_record, reconcile_stale_runs
@@ -154,3 +155,105 @@ def test_oversized_upload_is_rejected_cleanly(client):
 def test_api_docs_are_not_exposed(client):
     c, _ = client
     assert c.get("/docs").status_code == 404 and c.get("/openapi.json").status_code == 404
+
+
+# --- second re-review: corrupt records, cleanup errors, CSV ends, copy timeouts, service lock ----------------------
+
+def test_corrupt_records_do_not_stop_reconciliation_or_startup(tmp_path):
+    runs = tmp_path / "runs"
+    RunRecord("aaaa", runs)
+    for name, body in (("bad1", "{bad"), ("bad2", ""), ("bad3", "[1, 2]")):
+        (runs / name).mkdir()
+        (runs / name / "run.json").write_text(body)
+    assert reconcile_stale_runs(runs) == ["aaaa"]  # the valid stale record is still handled
+    assert (runs / "bad1" / "run.json.corrupt").exists() and not (runs / "bad1" / "run.json").exists()
+
+
+@pytest.mark.parametrize("body", ["{bad", "", "[1]"])
+def test_unreadable_record_is_a_404_not_a_500(tmp_path, monkeypatch, body):
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
+    c = TestClient(create_app(load_settings(), cleanup=False))
+    (tmp_path / "runs" / "ab12").mkdir(parents=True)
+    (tmp_path / "runs" / "ab12" / "run.json").write_text(body)
+    for path in ("", "/fragment", "/receipt", "/receipt.json"):
+        assert c.get(f"/runs/ab12{path}").status_code == 404
+
+
+def test_non_msb_exception_during_cleanup_still_ends_the_run(monkeypatch, tmp_path, msb, runner):
+    settings = load_settings()
+    record = RunRecord("cafe", tmp_path / "runs")
+    monkeypatch.setattr(orchestrator, "_pipeline", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("original cause")))
+    monkeypatch.setattr(orchestrator.RoomManager, "close_all",
+                        lambda self: ["JSONDecodeError: msb list printed garbage"])
+    execute_run(settings, msb, None, RunRequest("cafe", "admet-ai", tmp_path / "s.csv", "s.csv", True), record)
+    snap = record.snapshot()
+    assert snap["status"] == "failed" and snap["finished"]
+    assert "original cause" in snap["error"] and "Room cleanup problem" in snap["error"]  # both causes kept
+
+
+def test_close_all_turns_any_exception_into_a_reported_problem(msb, runner, record):
+    from sealed_room.rooms import RoomManager
+    mgr = RoomManager(msb, record, "python:3.12", 2, 4096)
+    mgr.open_download("aaaa")
+    msb.list_names = lambda: (_ for _ in ()).throw(KeyError("name"))
+    problems = mgr.close_all()
+    assert problems and "KeyError" in problems[0]
+
+
+@pytest.mark.parametrize("tail", ["\n", "\r\n", "\n\n\n", "\r\n\r\n"])
+def test_trailing_blank_lines_are_accepted(tmp_path, tail):
+    path = tmp_path / "s.csv"
+    path.write_bytes(("compound_id,smiles\nC1,CCO\nC2,CCC" + tail).replace("\n", "\r\n" if "\r" in tail else "\n").encode())
+    assert validate_study(path) == 2
+
+
+def test_blank_line_in_the_middle_is_skipped_not_fatal(tmp_path):
+    path = tmp_path / "s.csv"
+    path.write_text("compound_id,smiles\nC1,CCO\n\nC2,CCC\n")
+    assert validate_study(path) == 2
+
+
+def test_a_timed_out_copy_is_not_retried(msb, runner):
+    runner.copy_failures_left = 0
+    original = runner.__call__
+
+    def hang(argv, timeout_s):
+        if list(argv)[1] == "copy":
+            runner.calls.append(list(argv))
+            from sealed_room.msb import CmdResult
+            return CmdResult(tuple(argv), 124, "", "host-side timeout", 1)
+        return original(argv, timeout_s)
+
+    msb._run = hang
+    with pytest.raises(MsbError):
+        msb.copy_in("/tmp/x", "sr-ab12", "/work/x")
+    assert sum(1 for c in runner.calls if c[1] == "copy") == 1
+
+
+def test_service_lock_is_exclusive_and_released_on_close(tmp_path):
+    from sealed_room.web import _claim_service_lock
+    first = _claim_service_lock(tmp_path)
+    assert first is not None
+    assert _claim_service_lock(tmp_path) is None  # a second process may not run startup cleanup
+    first.close()
+    third = _claim_service_lock(tmp_path)
+    assert third is not None
+    third.close()
+
+
+def test_install_removes_the_local_wheel_archive_after_use(monkeypatch, tmp_path, msb, runner):
+    archive = tmp_path / "w.tar"
+    archive.write_bytes(b"x")
+    study = tmp_path / "study.csv"
+    study.write_text("compound_id,smiles\nC1,CCO\n")
+    record = RunRecord("ab12", tmp_path / "runs")
+    monkeypatch.setattr(orchestrator, "pins_for", lambda hosts, resolver: {h: "10.0.0.1" for h in hosts})
+    monkeypatch.setattr(orchestrator, "fetch_wheels", lambda *a, **k: {"wheels": [], "archive": archive, "archive_sha256": "0" * 64})
+    monkeypatch.setattr(orchestrator, "install_offline", lambda *a, **k: "2.0.1")
+    monkeypatch.setattr(orchestrator, "_wall_check", lambda *a, **k: None)
+    from sealed_room.agent import AgentOutcome
+    monkeypatch.setattr(orchestrator, "run_agent", lambda *a, **k: AgentOutcome(finished=True, results_copied=True))
+    monkeypatch.setattr(orchestrator, "_capture_runner", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrator, "_verify_results", lambda *a, **k: None)
+    execute_run(load_settings(), msb, None, RunRequest("ab12", "admet-ai", study, "study.csv", True), record)
+    assert not archive.exists()

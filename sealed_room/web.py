@@ -1,6 +1,7 @@
 """Web layer: server-rendered pages, a polled timeline fragment, one run at a time. No logic beyond routing."""
 from __future__ import annotations
 
+import fcntl
 import re
 import tempfile
 import threading
@@ -72,7 +73,10 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     run_lock = threading.Lock()
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
-    if cleanup:
+    # Startup cleanup deletes every room and marks "running" records aborted, so only the one process that owns
+    # the service lock may do it: a second process (a script, a test, a second worker) must not touch live work.
+    app.state.service_lock = _claim_service_lock(settings.runs_dir) if cleanup else None
+    if app.state.service_lock is not None:
         cleanup_orphans(Msb(settings.msb_bin))
         reconcile_stale_runs(settings.runs_dir)  # no run thread exists yet, so any "running" record is stale
 
@@ -81,7 +85,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
     @app.get("/", response_class=HTMLResponse)
     def intake(request: Request, busy: str = ""):
-        error = "A sealed run is in progress. Wait for it to finish, then run again." if busy else None
+        # Only say "in progress" while a run really holds the lock (a stale bookmark must not claim it).
+        error = "A sealed run is in progress. Wait for it to finish, then run again." if busy and run_lock.locked() else None
         return templates.TemplateResponse(request, "intake.html", intake_context(request, error))
 
     @app.post("/runs")
@@ -167,6 +172,18 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         return {"ok": True}
 
     return app
+
+
+def _claim_service_lock(runs_dir: Path):
+    """Take an exclusive lock for the life of the process. Returns the open file, or None if another process owns it."""
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    handle = (runs_dir / ".service.lock").open("w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
 
 def _stage_upload(runs_dir: Path, data: bytes) -> Path:
