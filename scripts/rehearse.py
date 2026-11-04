@@ -31,6 +31,27 @@ def rooms_left(msb_bin: str) -> list[str]:
     return [line for line in out.split() if line]
 
 
+def door_problems(receipt: dict, client: httpx.Client, run_dir: Path, run_id: str) -> list[str]:
+    """The door was used, and the inference key (from the environment, never printed) appears in no file and no response."""
+    problems: list[str] = []
+    door = receipt.get("door") or {}
+    if door.get("count", 0) < 1 or not any(c["ok"] and c["host"] == "api.vultrinference.com" for c in door.get("calls", [])):
+        problems.append(f"no successful call through the door: {door}")
+    else:
+        call = door["calls"][-1]
+        print(f"  door: {door['count']} call(s) to {call['host']}, {call['ms']} ms, model {call['model']}")
+    key = os.environ.get("VULTR_INFERENCE_API_KEY", "")
+    if not key:
+        return problems + ["VULTR_INFERENCE_API_KEY is not in the environment, so the key-absence check could not run"]
+    needle = key.encode()
+    leaked = [str(p.relative_to(run_dir)) for p in run_dir.rglob("*") if p.is_file() and needle in p.read_bytes()]
+    for path in ("receipt.json", "receipt", "fragment"):
+        if needle in client.get(f"/runs/{run_id}/{path}").content:
+            leaked.append(f"response /{path}")
+    print(f"  key search in run files and responses: {'MATCH' if leaked else 'NO MATCH'}")
+    return problems + [f"inference key found in: {leaked}"] * bool(leaked)
+
+
 def one_run(client: httpx.Client, runs_dir: Path, msb_bin: str, cap_s: int) -> list[str]:
     problems: list[str] = []
     started = time.monotonic()
@@ -64,6 +85,7 @@ def one_run(client: httpx.Client, runs_dir: Path, msb_bin: str, cap_s: int) -> l
         problems.append("results.csv hash differs from sha256sum")
     if not receipt["outputs"]:
         problems.append("no output recorded")
+    problems += door_problems(receipt, client, run_dir, run_id)
     page = client.get(f"/runs/{run_id}/receipt").text
     for needle in ("Study data in this run is synthetic.", "not a validated or GLP-compliant process"):
         if needle not in page:

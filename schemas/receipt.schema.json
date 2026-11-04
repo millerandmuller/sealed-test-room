@@ -13,6 +13,7 @@
     "started": {"type": "string"},
     "finished": {"type": ["string", "null"]},
     "error": {"type": ["string", "null"]},
+    "error_plain": {"type": ["string", "null"], "description": "The failure in plain words; the raw text stays in error."},
     "tool": {
       "type": "object",
       "required": ["spec", "version_installed", "wheels", "wheel_archive_sha256"],
@@ -72,6 +73,7 @@
         "base_url": {"type": ["string", "null"]},
         "fallback_used": {"type": "boolean"},
         "runs_on": {"const": "host"},
+        "key_handling": {"type": "string", "description": "What happens to the inference key, in words."},
         "steps": {"type": "array", "items": {"type": "object", "required": ["t", "kind", "name"],
           "properties": {"t": {"type": "string"}, "kind": {"enum": ["model", "tool", "phase"]}, "name": {"type": "string"},
                          "args": {"type": "string"}, "result_excerpt": {"type": "string"}}}}
@@ -87,6 +89,20 @@
       "properties": {"all_rooms_verified_absent": {"type": "boolean"}}
     },
     "notes": {"type": "array", "items": {"type": "string"}},
+    "door": {
+      "type": "object",
+      "required": ["count", "calls"],
+      "description": "Calls made from inside the sealed room to its one allowed host.",
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "key_route": {"type": ["string", "null"]},
+        "calls": {"type": "array", "items": {"type": "object",
+          "required": ["host", "ok", "ms"],
+          "properties": {"host": {"type": "string"}, "model_requested": {"type": "string"}, "http": {"type": ["integer", "null"]},
+                         "ok": {"type": "boolean"}, "ms": {"type": "integer"}, "model": {"type": ["string", "null"]},
+                         "reply": {"type": "string"}, "error": {"type": ["string", "null"]}}}}
+      }
+    },
     "honesty": {"type": "array", "items": {"type": "string"}}
   }
 }

@@ -41,14 +41,14 @@ class CmdResult:
         return self.code != 0 and "timed out" in self.stderr
 
 
-Runner = Callable[[Sequence[str], float], CmdResult]
+Runner = Callable[..., CmdResult]  # (argv, timeout_s) or, when text goes to the command's stdin, (argv, timeout_s, stdin_text)
 
 
-def subprocess_runner(argv: Sequence[str], timeout_s: float) -> CmdResult:
-    """Run argv on the host. A host-side timeout is reported as exit code 124."""
+def subprocess_runner(argv: Sequence[str], timeout_s: float, stdin_text: str | None = None) -> CmdResult:
+    """Run argv on the host. A host-side timeout is reported as exit code 124. `stdin_text` is never stored in the result."""
     started = time.monotonic()
     try:
-        proc = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout_s)
+        proc = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout_s, input=stdin_text)
         code, out, err = proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as exc:
         code, out, err = 124, exc.stdout or "", (exc.stderr or "") + "host-side timeout"
@@ -85,12 +85,19 @@ class Msb:
         command: Sequence[str],
         timeout_s: int,
         env: dict[str, str] | None = None,
+        stdin: str | None = None,
     ) -> CmdResult:
-        """Run a command in a room. A non-zero exit is returned, not raised: it is information."""
+        """Run a command in a room. A non-zero exit is returned, not raised: it is information.
+
+        `stdin` is for the one command that needs a secret: it reaches that command's standard input only, so it is
+        not in the room's environment, not on any command line and not in this result.
+        """
         argv = [self._bin, "exec", name, "--timeout", f"{timeout_s}s"]
         for key, value in (env or {}).items():
             argv += ["-e", f"{key}={value}"]
         argv += ["--", *command]
+        if stdin is not None:
+            return self._run(argv, timeout_s + 30, stdin)
         return self._run(argv, timeout_s + 30)
 
     def copy_in(self, host_path: str, name: str, dest: str) -> CmdResult:

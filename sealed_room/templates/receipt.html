@@ -10,6 +10,10 @@
   <div class="banner bad"><strong>NOT CLEAN.</strong>
     <ul style="margin:6px 0 0">{% for why in x.unclean_reasons %}<li>{{ why }}</li>{% endfor %}</ul></div>
 {% endif %}
+{% if x.error %}
+  <div class="banner bad">{{ x.error_plain }}
+    <details class="noprint" style="margin-top:6px"><summary class="small">Technical detail</summary><pre class="code" style="white-space:pre-wrap">{{ x.error }}</pre></details></div>
+{% endif %}
 {% if schema_problems %}
   <div class="banner bad"><strong>This receipt does not match its schema.</strong> {{ schema_problems|join("; ") }}</div>
 {% endif %}
@@ -50,6 +54,15 @@
     <span class="small">({{ room.destroy_check.command }})</span></p>
 {% endfor %}
 
+<h2>The door</h2>
+<div class="box">
+  <p style="margin:0"><strong>Calls through the door: {{ x.door.count }}</strong>{% if x.door.count == 0 %} (the room did not use its door in this run){% endif %}</p>
+  {% for c in x.door.calls %}
+    <p class="small mono" style="margin:6px 0 0">{{ c.host }} &middot; {% if c.ok %}HTTP {{ c.http }}{% else %}failed ({{ c.error }}){% endif %} &middot; {{ c.ms }} ms &middot; model {{ c.model or c.model_requested }}{% if c.reply %} &middot; reply: {{ c.reply }}{% endif %}</p>
+  {% endfor %}
+  {% if x.door.key_route %}<p class="small" style="margin:6px 0 0">Key route: {{ x.door.key_route }}.</p>{% endif %}
+</div>
+
 <h2>Tool</h2>
 <div class="box">
   <p style="margin:0"><span class="mono">{{ x.tool.spec }}</span> installed offline in the sealed room, version <span class="mono">{{ x.tool.version_installed }}</span>.</p>
@@ -89,7 +102,8 @@
 {% else %}<p class="small">No runner code was recorded.</p>{% endif %}
 
 <h2>Agent</h2>
-<p class="small" style="margin-top:0">Model <span class="mono">{{ x.agent.model }}</span> on Vultr Serverless Inference{% if x.agent.fallback_used %} (fallback model used){% endif %}. The agent loop runs on the host: the inference key never enters a room. Tool output the agent read is sent to the endpoint.</p>
+<p class="small" style="margin-top:0">Model <span class="mono">{{ x.agent.model }}</span> on Vultr Serverless Inference{% if x.agent.fallback_used %} (fallback model used){% endif %}. Tool output the agent read is sent to the endpoint.</p>
+<p class="small" style="margin-top:0">{{ x.agent.key_handling }}</p>
 <details class="noprint"><summary class="small">Show all {{ x.agent.steps|length }} recorded steps</summary>
   <table>{% for s in x.agent.steps %}
     <tr><td class="mono small">{{ s.t|hhmmss }}</td><td class="mono">{{ s.kind }} {{ s.name }}</td><td class="small">{{ s.args }} {{ s.result_excerpt }}</td></tr>

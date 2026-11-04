@@ -14,6 +14,7 @@ from typing import Callable
 
 from .agent import SealedSession, run_agent
 from .config import HONESTY_LINES, Settings
+from .door import run_door_call
 from .hashing import sha256_text
 from .inference import Inference
 from .intake import normalized_header, validate_study
@@ -127,9 +128,24 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     if outcome.error:
         raise RunAborted(outcome.error) if "time cap" in outcome.error else RuntimeError(outcome.error)
     _verify_results(request.study_path, run_dir / "outputs" / "results.csv", record)
+    _door_check(settings, msb, sealed, record, rows, deadline)
 
     rooms.close(sealed)
     _phase(record, "destroy", "Sealed room destroyed and verified absent.")
+
+
+def _door_check(settings: Settings, msb: Msb, sealed: Room, record: RunRecord, rows: int, deadline: float) -> None:
+    """The room's one use of its one door: a result check from inside, with the key on stdin of that one command."""
+    _phase(record, "door", f"The room now calls {settings.allowed_host} once to check the results. The key is passed on the standard input of that one command.")
+    calls = run_door_call(
+        msb, sealed.id, record, key=settings.inference_api_key, url=settings.inference_base_url,
+        allowed_host=settings.allowed_host, models=[settings.model_primary, settings.model_fallback],
+        expected_rows=rows, timeout_s=_budget(deadline, 150),
+    )
+    last = calls[-1]
+    _phase(record, "door", f"Calls through the door: {len(calls)} to {last['host']}, {last['ms']} ms, model {last['model'] or last['model_requested']}.")
+    if last["reply"].upper().startswith("PROBLEM"):
+        record.add_note(f"The model's check from inside the room disagreed with the results: {last['reply']} (the host's own check passed).")
 
 
 def _fetch_with_retry(msb, rooms: RoomManager, record, run_id, tool, run_dir: Path, deadline: float) -> dict:

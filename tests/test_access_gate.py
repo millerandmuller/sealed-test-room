@@ -92,3 +92,12 @@ def test_changing_the_code_invalidates_old_cookies(tmp_path, monkeypatch):
     c = TestClient(create_app(load_settings(), cleanup=False), follow_redirects=False)
     c.cookies.set(ACCESS_COOKIE, cookie)
     assert "Run in sealed room" not in c.get("/").text
+
+
+def test_cookie_is_secure_only_over_https(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
+    app = create_app(load_settings(), cleanup=False)
+    plain = TestClient(app, base_url="http://testserver", follow_redirects=False).post("/access", data={"code": TEST_CODE})
+    secure = TestClient(app, base_url="https://testserver", follow_redirects=False).post("/access", data={"code": TEST_CODE})
+    assert "secure" not in plain.headers["set-cookie"].lower()
+    assert "secure" in secure.headers["set-cookie"].lower() and "httponly" in secure.headers["set-cookie"].lower()

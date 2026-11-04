@@ -24,13 +24,16 @@ class FakeRunner:
         self.copy_ok = True
         self.copy_failures_left = 0  # fail this many copy calls, then succeed
         self.create_fails_after_adding = False  # the VM exists but msb reports an error
+        self.stdins: list[tuple[list[str], str]] = []  # (argv, text) for every call that got standard input
 
     def reply(self, contains: str, stdout: str = "", code: int = 0, stderr: str = "") -> None:
         self.exec_replies.append((contains, CmdResult((), code, stdout, stderr, 1)))
 
-    def __call__(self, argv, timeout_s):
+    def __call__(self, argv, timeout_s, stdin_text=None):
         argv = list(argv)
         self.calls.append(argv)
+        if stdin_text is not None:
+            self.stdins.append((argv, stdin_text))
         sub = argv[1]
         if sub == "create":
             self.rooms.add(argv[argv.index("-n") + 1])

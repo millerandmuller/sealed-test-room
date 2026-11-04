@@ -48,6 +48,7 @@ class RunRecord:
             "steps": [],
             "outputs": [],
             "results_preview": None,
+            "door": None,
             "notes": [],
             "honesty": [],
         }

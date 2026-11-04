@@ -11,7 +11,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from .config import ROOT
+from .config import KEY_HANDLING, ROOT
+from .failure_words import plain_failure
 
 SCHEMA_PATH = ROOT / "schemas" / "receipt.schema.json"
 REFERENCE_PATH = ROOT / "config" / "reference_labels.json"
@@ -24,7 +25,7 @@ def load_reference(path: Path = REFERENCE_PATH) -> dict | None:
 def unclean_reasons(record: dict) -> list[str]:
     reasons: list[str] = []
     if record["status"] != "completed":
-        reasons.append(f"run status is {record['status']}" + (f": {record['error']}" if record.get("error") else ""))
+        reasons.append(f"run status is {record['status']}" + (f": {plain_failure(record['error'])}" if record.get("error") else ""))
     if record.get("wall_check_verdict") != "PASSED":
         reasons.append("wall check did not pass")
     rooms = record.get("rooms", [])
@@ -44,6 +45,9 @@ def unclean_reasons(record: dict) -> list[str]:
         reasons.append("no output file hash was recorded")
     if not record.get("results_preview"):
         reasons.append("the results were not verified")
+    door = record.get("door")
+    if door is not None and not any(call.get("ok") for call in door.get("calls", [])):
+        reasons.append("no call went through the door")
     return reasons
 
 
@@ -72,6 +76,7 @@ def build_receipt(record: dict, reference: dict | None = None) -> dict:
         "started": record["started"],
         "finished": record.get("finished"),
         "error": record.get("error"),
+        "error_plain": plain_failure(record.get("error")) or None,
         "tool": record["tool"],
         "network": record.get("network", {}),
         "rooms": record["rooms"],
@@ -83,16 +88,22 @@ def build_receipt(record: dict, reference: dict | None = None) -> dict:
             "model": record["model"]["name"],
             "base_url": record["model"]["base_url"],
             "fallback_used": record["model"]["fallback_used"],
-            # The inference key never enters a room: model calls are made by the orchestrator on the host.
             "runs_on": "host",
+            "key_handling": KEY_HANDLING,
             "steps": record["steps"],
         },
+        "door": _door_section(record.get("door")),
         "results": _results_with_reference(record, reference),
         "reference": reference,
         "destroy": {"all_rooms_verified_absent": bool(record["rooms"]) and all(r.get("verified_absent") for r in record["rooms"])},
         "notes": record.get("notes", []),
         "honesty": record.get("honesty", []),
     }
+
+
+def _door_section(door: dict | None) -> dict:
+    calls = (door or {}).get("calls", [])
+    return {"count": len(calls), "calls": calls, "key_route": (door or {}).get("key_route")}
 
 
 def validate_receipt(receipt: dict) -> list[str]:
