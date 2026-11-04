@@ -104,9 +104,10 @@ class RoomManager:
         return problems
 
     def _open(self, name: str, kind: str, net_args: list[str], pins: dict[str, str]) -> Room:
-        self._msb.create(name, self._image, self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
         room = Room(id=name, kind=kind, policy=policy_string(net_args), pinned_hosts=dict(pins))
+        # Registered before the create call: if create fails after the VM exists, close_all still removes it.
         self._rooms[name] = room
+        self._msb.create(name, self._image, self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
         self._record.add_room(
             {"id": name, "kind": kind, "policy": room.policy, "image": self._image,
              "pinned_hosts": dict(pins), "created": now_iso(), "destroyed": None,

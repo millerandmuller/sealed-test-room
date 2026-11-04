@@ -38,7 +38,8 @@ class Inference:
                     reply = self._client.chat.completions.create(
                         model=model, messages=messages, tools=tools, tool_choice="auto", max_tokens=MAX_TOKENS
                     )
-                    return reply.choices[0].message, model
+                    # Report the model the endpoint says it served: it accepted a nonexistent name in a probe.
+                    return reply.choices[0].message, (getattr(reply, "model", None) or model)
                 except Exception as exc:  # network, 5xx, rate limit: all handled the same way
                     last_error = exc
             if model == self._settings.model_primary and self._on_fallback:

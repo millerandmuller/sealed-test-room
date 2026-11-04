@@ -87,6 +87,7 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     rows = validate_study(request.study_path)
     tool = resolve_tool(request.tool)
     record.update_tool(spec=tool["spec"])
+    record.update(honesty=_honesty_lines(request.synthetic))  # first, so a failed run's receipt carries them too
     run_dir = record.dir
 
     _phase(record, "download room", "Opening a download room (no study data inside) to fetch the tool.")
@@ -101,20 +102,23 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     sealed = rooms.open_sealed(request.run_id, pins[allowed], settings.allowed_port, pins)
     _phase(record, "sealed room", f"Sealed room open. Policy: {sealed.policy}")
 
+    # The wall check needs only the bare room, so it runs first: the cage is tested before the tool is even installed.
+    _wall_check(msb, sealed, record, settings)
+    _check_clock(deadline)
+
+    _phase(record, "offline install", f"Installing {tool['spec']} from the fetched wheels. The package index is unreachable from here.")
     started = time.monotonic()
     version = install_offline(msb, sealed.id, fetched["archive"], fetched["archive_sha256"], tool["spec"], _budget(deadline, 300))
     record.update_tool(version_installed=version)
     _phase(record, "offline install", f"{tool['spec']} installed offline, version {version} ({int(time.monotonic() - started)} s).")
     _check_clock(deadline)
 
-    _wall_check(msb, sealed, record, settings)
-
     session = SealedSession(
         msb=msb, room_id=sealed.id, record=record, study_path=request.study_path,
         study_display_name=request.display_name, synthetic=request.synthetic,
-        out_dir=run_dir / "outputs", max_room_exec_s=settings.caps["tool_run_s"], wall_ok=True,
+        out_dir=run_dir / "outputs", max_room_exec_s=settings.caps["tool_run_s"], wall_ok=True, deadline=deadline,
     )
-    _phase(record, "agent", "Wall check passed. The agent may now bring the study file in.")
+    _phase(record, "agent", "The agent may now bring the study file in.")
     outcome = run_agent(infer, session, tool["spec"], version, rows, tool["entry_hint"],
                         settings.caps["max_agent_steps"], deadline)
     _capture_runner(msb, sealed, record)
@@ -124,7 +128,6 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
 
     rooms.close(sealed)
     _phase(record, "destroy", "Sealed room destroyed and verified absent.")
-    record.update(honesty=_honesty_lines(request.synthetic))
 
 
 def _fetch_with_retry(msb, rooms: RoomManager, record, run_id, tool, run_dir: Path, deadline: float) -> dict:

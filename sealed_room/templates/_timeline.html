@@ -6,6 +6,9 @@
   </h1>
   <p class="lede">Tool <span class="mono">{{ r.tool.spec or "..." }}</span> &middot; started {{ r.started|hhmmss }} UTC</p>
 
+  {% if r.status != "running" and (r.finished|minutes_since) > 3 %}
+    <div class="banner" style="border-color:var(--rule);background:#fff">Recorded run. This page shows the stored record of a real run that started {{ r.started|stamp }} UTC; it is not a live run.</div>
+  {% endif %}
   {% if r.error %}<div class="banner bad">{{ r.error }}</div>{% endif %}
 
   <div class="cols">
@@ -32,6 +35,13 @@
         </table>
       {% elif r.status == "running" %}<p class="spinner">Waiting for the sealed room.</p>
       {% else %}<p class="small">The wall check did not run.</p>{% endif %}
+
+      {% for f in r.inputs %}
+        <p class="destroy-line">Study file in: {{ f.name }} &middot; sha256 <span class="hash">{{ f.sha256 }}</span></p>
+      {% endfor %}
+      {% for f in r.outputs %}
+        <p class="destroy-line">Result out: {{ f.name }} &middot; sha256 <span class="hash">{{ f.sha256 }}</span></p>
+      {% endfor %}
 
       {% for room in r.rooms if room.destroyed %}
         <p class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }}

@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 
+COPY_RETRIES = 2
+COPY_RETRY_PAUSE_S = 1.0
+
+
 class MsbError(RuntimeError):
     """An msb command failed in a way the caller cannot treat as information."""
 
@@ -89,15 +93,21 @@ class Msb:
         return self._run(argv, timeout_s + 30)
 
     def copy_in(self, host_path: str, name: str, dest: str) -> CmdResult:
-        result = self._run([self._bin, "copy", host_path, f"{name}:{dest}"], 600)
-        if not result.ok:
-            raise MsbError(f"msb copy into {name}:{dest} failed: {result.stderr.strip()}")
-        return result
+        return self._copy([self._bin, "copy", host_path, f"{name}:{dest}"], f"into {name}:{dest}")
 
     def copy_out(self, name: str, src: str, host_path: str) -> CmdResult:
-        result = self._run([self._bin, "copy", f"{name}:{src}", host_path], 600)
+        return self._copy([self._bin, "copy", f"{name}:{src}", host_path], f"out of {name}:{src}")
+
+    def _copy(self, argv: list[str], what: str) -> CmdResult:
+        """Large copies sometimes fail once with "bulk transfer cancelled" (seen in 1 of 5 demo runs); try again."""
+        result = self._run(argv, 600)
+        for _attempt in range(COPY_RETRIES):
+            if result.ok:
+                return result
+            time.sleep(COPY_RETRY_PAUSE_S)
+            result = self._run(argv, 600)
         if not result.ok:
-            raise MsbError(f"msb copy out of {name}:{src} failed: {result.stderr.strip()}")
+            raise MsbError(f"msb copy {what} failed after {COPY_RETRIES + 1} attempts: {result.stderr.strip()}")
         return result
 
     def remove(self, name: str) -> CmdResult:

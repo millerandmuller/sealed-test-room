@@ -65,16 +65,10 @@
   {% for f in x.outputs %}<tr><td>out</td><td class="mono">{{ f.name }}</td><td class="mono hash">{{ f.sha256 }}</td></tr>{% endfor %}
 </table>
 
-<h2>The exact code that ran</h2>
-{% if x.code %}
-  <p class="small">SHA-256 of the runner: <span class="mono hash">{{ x.code.sha256 }}</span>. Written by <span class="mono">{{ x.agent.model }}</span>.</p>
-  <pre class="code">{{ x.code.text }}</pre>
-{% else %}<p class="small">No runner code was recorded.</p>{% endif %}
-
 <h2>Results</h2>
 {% if x.results %}
   <table>
-    <tr><th>Compound</th><th>DILI (tool output)</th><th>Reference label</th></tr>
+    <tr><th>Compound</th><th>DILI endpoint of {{ (x.tool.spec or "the tool").split("==")[0] }} (tool output)</th><th>Reference label</th></tr>
     {% for row in x.results %}
       <tr><td class="mono">{{ row.compound_id }}{% if row.reference_name %} ({{ row.reference_name }}){% endif %}</td>
         <td class="mono">{{ "%.3f"|format(row.DILI|float) }}</td>
@@ -82,10 +76,16 @@
     {% endfor %}
   </table>
   {% if x.reference %}
-    <p class="small">Reference labels: {{ x.reference.dataset }} (<a href="{{ x.reference.dataset_url }}">source</a>). {{ x.reference.caveat }}</p>
+    <p class="small">Reference labels: {{ x.reference.dataset }}, <span class="mono hash">{{ x.reference.dataset_url }}</span>. {{ x.reference.caveat }}</p>
   {% endif %}
   <p class="small">The values are the tool's output as measured in this run. They are not a claim that the tool is accurate.</p>
 {% else %}<p class="small">No results were produced.</p>{% endif %}
+
+<h2>The exact code that ran</h2>
+{% if x.code %}
+  <p class="small">SHA-256 of the runner: <span class="mono hash">{{ x.code.sha256 }}</span>. Written by <span class="mono">{{ x.agent.model }}</span>, as reported by the inference endpoint.</p>
+  <pre class="code">{{ x.code.text }}</pre>
+{% else %}<p class="small">No runner code was recorded.</p>{% endif %}
 
 <h2>Agent</h2>
 <p class="small" style="margin-top:0">Model <span class="mono">{{ x.agent.model }}</span> on Vultr Serverless Inference{% if x.agent.fallback_used %} (fallback model used){% endif %}. The agent loop runs on the host: the inference key never enters a room. Tool output the agent read is sent to the endpoint.</p>

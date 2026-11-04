@@ -29,6 +29,17 @@ def hhmmss(iso: str | None) -> str:
     return datetime.fromisoformat(iso).strftime("%H:%M:%S") if iso else ""
 
 
+def stamp(iso: str | None) -> str:
+    return datetime.fromisoformat(iso).strftime("%Y-%m-%d %H:%M:%S") if iso else ""
+
+
+def minutes_since(iso: str | None) -> float:
+    """Minutes since an ISO timestamp (0 when there is none)."""
+    if not iso:
+        return 0.0
+    return (datetime.now(datetime.fromisoformat(iso).tzinfo) - datetime.fromisoformat(iso)).total_seconds() / 60
+
+
 def exit_code(excerpt: str) -> str:
     match = re.match(r"exit (\d+)", excerpt or "")
     return match.group(1) if match else "?"
@@ -57,7 +68,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     settings = settings or load_settings()
     app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.filters.update(hhmmss=hhmmss, step_line=step_line)
+    templates.env.filters.update(hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     run_lock = threading.Lock()
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
@@ -69,8 +80,9 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         return {"rules": settings.rules, "error": error, "demo_rows": 12}
 
     @app.get("/", response_class=HTMLResponse)
-    def intake(request: Request):
-        return templates.TemplateResponse(request, "intake.html", intake_context(request))
+    def intake(request: Request, busy: str = ""):
+        error = "A sealed run is in progress. Wait for it to finish, then run again." if busy else None
+        return templates.TemplateResponse(request, "intake.html", intake_context(request, error))
 
     @app.post("/runs")
     async def start_run(
@@ -100,7 +112,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             return _intake_error(templates, intake_context, request, str(exc))
         if not run_lock.acquire(blocking=False):
             _discard(staged)
-            return _intake_error(templates, intake_context, request, "A sealed run is in progress. Wait for it to finish.", 409)
+            # Redirect instead of rendering at /runs, so a browser refresh cannot submit the form again.
+            return RedirectResponse("/?busy=1", status_code=303)
         try:
             run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic)
         except Exception:

@@ -80,9 +80,12 @@ class SealedSession:
     wall_ok: bool = False
     done: bool = False
     copied_out: list[str] = field(default_factory=list)
+    deadline: float | None = None  # time.monotonic() value for the whole run
 
     def room_exec(self, command: str, timeout_s: int | None = None) -> str:
         limit = min(int(timeout_s or 120), self.max_room_exec_s)
+        if self.deadline is not None:
+            limit = max(5, min(limit, int(self.deadline - time.monotonic())))
         result = self.msb.exec(self.room_id, ["sh", "-c", command], limit)
         note = " (timed out)" if result.timed_out else ""
         return f"exit {result.code}{note}\n--- stdout ---\n{_squeeze(result.stdout)}\n--- stderr ---\n{_squeeze(result.stderr)}"

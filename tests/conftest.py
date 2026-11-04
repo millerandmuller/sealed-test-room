@@ -22,6 +22,8 @@ class FakeRunner:
         self.exec_replies: list[tuple[str, CmdResult]] = []  # (substring of the joined argv, reply)
         self.keep_rooms_on_rm = False  # simulate a room that survives removal
         self.copy_ok = True
+        self.copy_failures_left = 0  # fail this many copy calls, then succeed
+        self.create_fails_after_adding = False  # the VM exists but msb reports an error
 
     def reply(self, contains: str, stdout: str = "", code: int = 0, stderr: str = "") -> None:
         self.exec_replies.append((contains, CmdResult((), code, stdout, stderr, 1)))
@@ -32,6 +34,8 @@ class FakeRunner:
         sub = argv[1]
         if sub == "create":
             self.rooms.add(argv[argv.index("-n") + 1])
+            if self.create_fails_after_adding:
+                return CmdResult(tuple(argv), 1, "", "boot timeout", 1)
             return CmdResult(tuple(argv), 0, "", "", 1)
         if sub == "rm":
             if not self.keep_rooms_on_rm:
@@ -42,12 +46,20 @@ class FakeRunner:
                 return CmdResult(tuple(argv), 0, json.dumps([{"name": n} for n in sorted(self.rooms)]), "", 1)
             return CmdResult(tuple(argv), 0, "\n".join(sorted(self.rooms)) or "No sandboxes found.", "", 1)
         if sub == "copy":
+            if self.copy_failures_left > 0:
+                self.copy_failures_left -= 1
+                return CmdResult(tuple(argv), 1, "", "bulk transfer cancelled", 1)
             return CmdResult(tuple(argv), 0 if self.copy_ok else 1, "", "" if self.copy_ok else "copy failed", 1)
         joined = " ".join(argv)
         for needle, reply in self.exec_replies:
             if needle in joined:
                 return CmdResult(tuple(argv), reply.code, reply.stdout, reply.stderr, 1)
         return CmdResult(tuple(argv), 0, "", "", 1)
+
+
+@pytest.fixture(autouse=True)
+def no_copy_retry_pause(monkeypatch):
+    monkeypatch.setattr("sealed_room.msb.COPY_RETRY_PAUSE_S", 0)
 
 
 @pytest.fixture

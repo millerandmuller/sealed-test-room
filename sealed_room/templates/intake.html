@@ -11,7 +11,7 @@
   <p class="small" style="margin:6px 0 0">Room size: {{ rules.room.cpus }} CPUs, {{ rules.room.memory_mb }} MB &middot; run cap {{ (rules.caps.whole_run_s / 60)|int }} minutes</p>
 </div>
 
-<form method="post" action="/runs" enctype="multipart/form-data">
+<form method="post" action="/runs" enctype="multipart/form-data" onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Starting...';">
   <label for="tool">Tool (package name)</label>
   <input type="text" id="tool" name="tool" value="admet-ai" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*(==[A-Za-z0-9.!+_\-]+)?">
 
