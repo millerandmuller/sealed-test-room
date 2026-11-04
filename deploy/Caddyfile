@@ -1,0 +1,9 @@
+# TLS front for the app: Caddy obtains and renews the Let's Encrypt certificate and redirects HTTP to HTTPS for the hostname.
+45-63-20-61.sslip.io {
+	reverse_proxy 127.0.0.1:8000
+}
+
+# Fallback for networks whose resolver refuses sslip.io names: the bare IP stays on plain HTTP (the README says so).
+http://45.63.20.61 {
+	reverse_proxy 127.0.0.1:8000
+}
