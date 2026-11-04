@@ -150,7 +150,7 @@ def test_receipt_carries_the_door_and_the_true_key_sentence():
 def test_completed_run_without_a_successful_door_call_is_not_clean():
     record = RunRecord_dict(door={"calls": [], "stats": None, "key_route": None})
     assert "no call went through the door" in unclean_reasons(record)
-    assert not any("door" in why for why in unclean_reasons(RunRecord_dict(door=None)))  # records from before F15
+    assert not any("door" in why for why in unclean_reasons(RunRecord_dict(door=None)))  # records from before the door existed
 
 
 def test_old_sentence_is_gone_from_the_source():
