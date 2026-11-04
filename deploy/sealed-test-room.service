@@ -1,0 +1,20 @@
+[Unit]
+Description=Sealed Test Room web app and orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/sealed-test-room
+EnvironmentFile=/root/.config/sealed-test-room/.env
+Environment=PATH=/root/.local/bin:/root/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=RUNS_DIR=/root/sealed-test-room-runs
+ExecStart=/root/venv/bin/uvicorn sealed_room.web:create_app --factory --host 0.0.0.0 --port 80
+Restart=on-failure
+RestartSec=3
+# Give a run in progress time to finish its room cleanup on stop.
+TimeoutStopSec=60
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
