@@ -57,9 +57,20 @@ class FakeRunner:
         return CmdResult(tuple(argv), 0, "", "", 1)
 
 
+TEST_CODE = "test-access-code-0123456789"
+
+
 @pytest.fixture(autouse=True)
 def no_copy_retry_pause(monkeypatch):
     monkeypatch.setattr("sealed_room.msb.COPY_RETRY_PAUSE_S", 0)
+    monkeypatch.setattr("sealed_room.web.WRONG_CODE_DELAY_S", 0)
+    monkeypatch.setenv("JUDGE_ACCESS_CODE", TEST_CODE)
+
+
+def authed(client):
+    """Log a TestClient in with the test access code (the cookie stays in the client)."""
+    assert client.post("/access", data={"code": TEST_CODE}).status_code == 200
+    return client
 
 
 @pytest.fixture

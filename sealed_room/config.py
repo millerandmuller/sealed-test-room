@@ -49,6 +49,7 @@ class Settings:
     model_fallback: str
     rules: dict
     demo_study_path: Path
+    judge_access_code: str = ""
 
     @property
     def allowed_host(self) -> str:
@@ -88,4 +89,5 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         model_fallback=env.get("MODEL_FALLBACK", "qwen3.8-27b"),
         rules=load_rules(),
         demo_study_path=Path(env.get("DEMO_STUDY_PATH", str(ROOT / "demo-data" / "study_synthetic.csv"))),
+        judge_access_code=env.get("JUDGE_ACCESS_CODE", "").strip(),
     )

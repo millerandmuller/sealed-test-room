@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import subprocess
 import sys
 import time
@@ -82,7 +83,12 @@ def main() -> int:
     parser.add_argument("--cap", type=int, default=900)
     args = parser.parse_args()
     failures = 0
+    code = os.environ.get("JUDGE_ACCESS_CODE", "")  # read from the environment so it never appears on a command line
     with httpx.Client(base_url=args.base, timeout=30) as client:
+        # A right code answers 303 (redirect to the intake) and sets the session cookie; anything else is a refusal.
+        if code and client.post("/access", data={"code": code}, follow_redirects=False).status_code != 303:
+            print("FAIL: the access code was not accepted")
+            return 1
         for number in range(1, args.runs + 1):
             print(f"rehearsal {number} of {args.runs}")
             problems = one_run(client, args.runs_dir, args.msb, args.cap)

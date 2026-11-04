@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from sealed_room import orchestrator
 from sealed_room.config import load_settings
+from tests.conftest import authed
 from sealed_room.intake import IntakeError, validate_study
 from sealed_room.msb import MsbError
 from sealed_room.orchestrator import RunAborted, RunRequest, _budget, _verify_results, execute_run
@@ -128,7 +129,7 @@ def test_receipt_needs_both_room_kinds():
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
-    return TestClient(create_app(load_settings(), cleanup=False)), tmp_path / "runs"
+    return authed(TestClient(create_app(load_settings(), cleanup=False))), tmp_path / "runs"
 
 
 @pytest.mark.parametrize("tool", ["git+https://x/y.git", "pkg; rm -rf /", "--index-url=http://evil", "a b", "x" * 10000])
@@ -172,7 +173,7 @@ def test_corrupt_records_do_not_stop_reconciliation_or_startup(tmp_path):
 @pytest.mark.parametrize("body", ["{bad", "", "[1]"])
 def test_unreadable_record_is_a_404_not_a_500(tmp_path, monkeypatch, body):
     monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
-    c = TestClient(create_app(load_settings(), cleanup=False))
+    c = authed(TestClient(create_app(load_settings(), cleanup=False)))
     (tmp_path / "runs" / "ab12").mkdir(parents=True)
     (tmp_path / "runs" / "ab12" / "run.json").write_text(body)
     for path in ("", "/fragment", "/receipt", "/receipt.json"):

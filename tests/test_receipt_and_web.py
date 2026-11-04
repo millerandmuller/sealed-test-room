@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sealed_room.config import load_settings
+from tests.conftest import authed
 from sealed_room.receipt import build_receipt, load_reference, unclean_reasons, validate_receipt
 from sealed_room.web import create_app
 
@@ -84,7 +85,7 @@ def test_schema_rejects_missing_required_key():
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
     app = create_app(load_settings(), cleanup=False)
-    return TestClient(app), tmp_path / "runs"
+    return authed(TestClient(app)), tmp_path / "runs"
 
 
 def save(runs_dir, rec):

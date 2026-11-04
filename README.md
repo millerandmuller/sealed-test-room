@@ -19,6 +19,10 @@ Status: work in progress, built for the Vultr Agent Rush hackathon (Challenge 1,
 - **Microsandbox (`msb` 0.7.13) on that host**: creates, executes in, copies to and from, and removes the rooms.
 - **Vultr Serverless Inference** (OpenAI-compatible, `glm-5.3`, fallback `qwen3.8-27b`): runs the agent loop; it is also the single host the sealed room may reach.
 
+## Access
+
+The public URL asks for an access code once (a signed cookie keeps it for the browser session). A wrong code starts nothing: no run, no room. The code is set by `JUDGE_ACCESS_CODE` in the host's environment file and is never stored in the repository. The site is served over plain HTTP, so the code is not encrypted in transit.
+
 ## What this is not
 
 - The demo study data is synthetic and says so on every screen.

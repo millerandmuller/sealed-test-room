@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sealed_room import orchestrator
 from sealed_room.agent import AgentOutcome
 from sealed_room.config import load_settings
+from tests.conftest import authed
 from sealed_room.inference import Inference
 from sealed_room.msb import MsbError
 from sealed_room.orchestrator import RunRequest, execute_run
@@ -136,7 +137,7 @@ def test_inference_falls_back_after_two_primary_failures():
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
-    return TestClient(create_app(load_settings(), cleanup=False)), tmp_path / "runs"
+    return authed(TestClient(create_app(load_settings(), cleanup=False))), tmp_path / "runs"
 
 
 def save(runs, rec):

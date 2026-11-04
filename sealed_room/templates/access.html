@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>This test room is open to judges.</h1>
+<p class="lede">Enter the access code from the submission to continue. You only need to do this once per browser session.</p>
+
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+
+<form method="post" action="/access">
+  <label for="code">Access code</label>
+  <input type="password" id="code" name="code" autocomplete="off" autofocus required>
+  <button class="primary" type="submit">Enter</button>
+</form>
+<p class="small" style="margin-top:18px">A wrong code starts nothing: no run, no room.</p>
+{% endblock %}

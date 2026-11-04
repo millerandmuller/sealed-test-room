@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import hmac
 import re
 import tempfile
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +27,14 @@ from .toolinstall import ToolInstallError, resolve_tool
 
 HERE = Path(__file__).resolve().parent
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4}$")
+ACCESS_COOKIE = "stm_access"
+ACCESS_COOKIE_MAX_AGE_S = 12 * 3600
+WRONG_CODE_DELAY_S = 1.0
+
+
+def access_token(code: str) -> str:
+    """The cookie value: an HMAC keyed by the access code, so changing the code invalidates every cookie."""
+    return hmac.new(code.encode(), b"sealed-test-room-access-v1", hashlib.sha256).hexdigest()
 
 
 def hhmmss(iso: str | None) -> str:
@@ -84,11 +95,37 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         cleanup_orphans(Msb(settings.msb_bin))
         reconcile_stale_runs(settings.runs_dir)  # no run thread exists yet, so any "running" record is stale
 
+    def authorized(request: Request) -> bool:
+        """Fails closed: with no access code configured nobody is let in."""
+        code = settings.judge_access_code
+        return bool(code) and hmac.compare_digest(request.cookies.get(ACCESS_COOKIE, ""), access_token(code))
+
+    def gate(request: Request) -> RedirectResponse | None:
+        """Every page and action except /healthz and /static needs the cookie; no code means no run and no room."""
+        return None if authorized(request) else RedirectResponse("/", status_code=303)
+
+    def access_page(request: Request, error: str | None = None, status: int = 200):
+        configured = bool(settings.judge_access_code)
+        message = error or (None if configured else "No access code is configured on this host.")
+        return templates.TemplateResponse(request, "access.html", {"error": message}, status_code=status)
+
     def intake_context(request: Request, error: str | None = None) -> dict:
         return {"rules": settings.rules, "error": error, "demo_rows": 12}
 
+    @app.post("/access")
+    def enter_code(request: Request, code: str = Form("")):
+        expected = settings.judge_access_code
+        if not expected or not hmac.compare_digest(code.strip().encode(), expected.encode()):
+            time.sleep(WRONG_CODE_DELAY_S)  # slows guessing; the code itself is long and random
+            return access_page(request, "That access code is not right.", 401)
+        reply = RedirectResponse("/", status_code=303)
+        reply.set_cookie(ACCESS_COOKIE, access_token(expected), max_age=ACCESS_COOKIE_MAX_AGE_S, httponly=True, samesite="lax")
+        return reply
+
     @app.get("/", response_class=HTMLResponse)
     def intake(request: Request, busy: str = ""):
+        if not authorized(request):
+            return access_page(request)
         # Only say "in progress" while a run really holds the lock (a stale bookmark must not claim it).
         error = "A sealed run is in progress. Wait for it to finish, then run again." if busy and run_lock.locked() else None
         return templates.TemplateResponse(request, "intake.html", intake_context(request, error))
@@ -101,6 +138,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         synthetic: str = Form(""),
         study: UploadFile | None = File(None),
     ):
+        if (blocked := gate(request)) is not None:
+            return blocked  # wrong or missing code: no run directory, no room
         try:
             resolve_tool(tool)
         except ToolInstallError as exc:
@@ -150,11 +189,15 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_page(request: Request, run_id: str):
+        if (blocked := gate(request)) is not None:
+            return blocked
         record = record_or_404(run_id)
         return templates.TemplateResponse(request, "run.html", {"r": record, "rules": settings.rules})
 
     @app.get("/runs/{run_id}/fragment", response_class=HTMLResponse)
     def run_fragment(request: Request, run_id: str):
+        if (blocked := gate(request)) is not None:
+            return blocked
         record = record_or_404(run_id)
         return templates.TemplateResponse(request, "_timeline.html", {"r": record, "rules": settings.rules})
 
@@ -163,12 +206,16 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
     @app.get("/runs/{run_id}/receipt", response_class=HTMLResponse)
     def receipt_page(request: Request, run_id: str):
+        if (blocked := gate(request)) is not None:
+            return blocked
         receipt = make_receipt(run_id)
         problems = validate_receipt(receipt)
         return templates.TemplateResponse(request, "receipt.html", {"x": receipt, "schema_problems": problems})
 
     @app.get("/runs/{run_id}/receipt.json")
-    def receipt_json(run_id: str):
+    def receipt_json(request: Request, run_id: str):
+        if (blocked := gate(request)) is not None:
+            return blocked
         return JSONResponse(make_receipt(run_id))
 
     @app.get("/healthz")
