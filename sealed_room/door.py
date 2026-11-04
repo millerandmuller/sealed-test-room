@@ -7,12 +7,13 @@ own check in the orchestrator stays authoritative; the model's reply is recorded
 How the inference key travels (measured on msb 0.7.13, see directives/common_issues.md):
 - `msb create --secret` does not fit a sealed room with an IP-only allow rule (the proxy answers secret_policy_denied);
   it only worked with a domain rule, open gateway DNS and TLS interception, which would widen the wall;
-- so the key goes on the standard input of this one command: not in the room at creation, not in the environment of
+- so the key goes on the standard input of this one command (run with python -I -S -B so nothing the tool left behind is imported): not in the room at creation, not in the environment of
   the tool's run, not on any command line, not written to the room's disk by the command.
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from urllib.parse import urlparse
 
@@ -96,7 +97,11 @@ def run_door_call(msb: Msb, room_id: str, record: RunRecord, *, key: str, url: s
                "results_path": RESULTS_IN_ROOM, "max_tokens": MAX_TOKENS, "timeout_s": CALL_TIMEOUT_S}
     _write_in_room(msb, room_id, SCRIPT_PATH, DOOR_SCRIPT)
     _write_in_room(msb, room_id, REQUEST_PATH, json.dumps(request))
-    result = msb.exec(room_id, ["python3", SCRIPT_PATH], timeout_s, stdin=key + "\n")
+    # -I -S -B: no script directory or user site on the import path, no .pth or sitecustomize hooks, no bytecode files,
+    # so a file the tool left in /tmp or a site-packages hook cannot run in this one command and read the key from stdin.
+    result = msb.exec(room_id, ["python3", "-I", "-S", "-B", SCRIPT_PATH], timeout_s, stdin=key + "\n")
+    if _carries_key(result.stdout + result.stderr, key):
+        raise DoorError("The call through the door failed: the room's output carried the key in some form, so it was discarded.")
     stdout, stderr = _scrub(result.stdout, key), _scrub(result.stderr, key)
     try:
         report = json.loads(stdout.strip().splitlines()[-1])
@@ -113,6 +118,22 @@ def _clean_call(call: dict, host: str) -> dict:
     return {"host": host, "model_requested": str(call.get("model_requested")), "http": call.get("http"),
             "ok": bool(call.get("ok")), "ms": int(call.get("ms") or 0), "model": call.get("model"),
             "reply": clip(str(call.get("reply") or ""), 300), "error": call.get("error")}
+
+
+def _key_forms(key: str) -> set[str]:
+    """The key as it could be smuggled out: plain, reversed, hex, base64 (standard and url-safe, any alignment), percent-encoded."""
+    raw = key.encode()
+    forms = {key, key[::-1], binascii.hexlify(raw).decode()}
+    for offset in range(3):  # base64 alignment depends on what precedes the key
+        padded = b"x" * offset + raw
+        for encode in (base64.b64encode, base64.urlsafe_b64encode):
+            text = encode(padded).decode().rstrip("=")
+            forms.add(text[4:] if offset else text)  # drop the chars the filler contributes
+    return {f for f in forms if len(f) >= 8}
+
+
+def _carries_key(text: str, key: str) -> bool:
+    return bool(key) and any(form in text for form in _key_forms(key))
 
 
 def _scrub(text: str, key: str) -> str:

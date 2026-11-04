@@ -38,7 +38,8 @@ KEY_HANDLING = (
     "The agent loop runs on the host. The inference key is never in the room while the tool runs. For the single "
     "result-verification call it is passed on the standard input of that one command (not in the environment, not on the "
     "command line, not written to the room's disk), the room can reach only the inference endpoint, and the room is "
-    "destroyed afterwards."
+    "destroyed afterwards. The call is reported by code running in the room: if a tool had tampered with the room's own "
+    "Python installation, that report could be wrong, so the wall check and the host's own result check do not depend on it."
 )
 
 HONESTY_LINES = {

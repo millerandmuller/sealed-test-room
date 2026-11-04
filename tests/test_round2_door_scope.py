@@ -102,7 +102,7 @@ def test_key_goes_only_on_stdin_of_the_one_command(runner, tmp_path):
     assert all(KEY not in " ".join(argv) for argv in runner.calls), "the key must not appear on any command line"
     assert len(runner.stdins) == 1
     argv, text = runner.stdins[0]
-    assert text == KEY + "\n" and argv[-2:] == ["python3", "/tmp/door_check.py"]
+    assert text == KEY + "\n" and argv[-5:] == ["python3", "-I", "-S", "-B", "/tmp/door_check.py"]
     assert "-e" not in argv, "no environment variable carries the key"
 
 
@@ -159,3 +159,27 @@ def test_old_sentence_is_gone_from_the_source():
     hits = [str(p) for p in root.rglob("*") if p.is_file() and p.suffix in {".py", ".html", ".md", ".json"}
             and ".git" not in p.parts and "tests" not in p.parts and "never enters a room" in p.read_text(errors="ignore")]
     assert hits == []
+
+
+def test_door_runs_the_script_isolated(runner, tmp_path):
+    runner.reply("door_check.py", stdout=door_reply())
+    call_door(runner, tmp_path)
+    argv, _ = runner.stdins[0]
+    assert argv[-5:] == ["python3", "-I", "-S", "-B", "/tmp/door_check.py"]
+
+
+@pytest.mark.parametrize("smuggle", [
+    lambda k: k[::-1],
+    lambda k: k.encode().hex(),
+    lambda k: __import__("base64").b64encode(k.encode()).decode(),
+    lambda k: __import__("base64").urlsafe_b64encode(k.encode()).decode().rstrip("="),
+    lambda k: __import__("base64").b64encode(b"OK " + k.encode()).decode(),
+    lambda k: __import__("base64").b64encode(b"x" + k.encode()).decode(),
+])
+def test_encoded_key_in_room_output_is_discarded(runner, tmp_path, smuggle):
+    runner.reply("door_check.py", stdout=door_reply(reply="OK " + smuggle(KEY)))
+    record = make_record(tmp_path)
+    with pytest.raises(DoorError, match="carried the key"):
+        run_door_call(Msb("msb", runner), "sr-abcd", record, key=KEY, url=URL, allowed_host="api.vultrinference.com",
+                      models=["m"], expected_rows=12, timeout_s=10)
+    assert record.snapshot()["door"] is None
