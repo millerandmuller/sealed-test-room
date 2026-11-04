@@ -1,7 +1,7 @@
 {
   "applies_to": "demo-data/study_synthetic.csv",
   "dataset": "FDA DILIrank 2.0",
-  "dataset_url": "https://www.fda.gov/science-research/liver-toxicity-knowledge-base-ltkb/drug-induced-liver-injury-rank-dilirank-dataset",
+  "dataset_url": "https://www.fda.gov/science-research/liver-toxicity-knowledge-base-ltkb/drug-induced-liver-injury-rank-dilirank-20-dataset",
   "compounds": [
     {"compound_id": "C01", "name": "troglitazone", "label": "Most-DILI-concern (withdrawn)"},
     {"compound_id": "C02", "name": "chlorpheniramine", "label": "No-DILI-concern"}

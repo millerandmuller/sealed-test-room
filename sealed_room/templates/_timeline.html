@@ -57,6 +57,9 @@
           <li><span class="t">{{ s.t|hhmmss }}</span>{{ s|step_line }}</li>
         {% else %}<li class="small">Starting.</li>{% endfor %}
       </ul>
+      {% if r.status == "running" and r.steps %}
+        <p class="spinner">Working: {{ r.steps[-1].t|seconds_since }} s since the last step.</p>
+      {% endif %}
     </div>
   </div>
 

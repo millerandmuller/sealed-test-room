@@ -41,6 +41,10 @@ def minutes_since(iso: str | None) -> float:
     return (datetime.now(datetime.fromisoformat(iso).tzinfo) - datetime.fromisoformat(iso)).total_seconds() / 60
 
 
+def seconds_since(iso: str | None) -> int:
+    return int(minutes_since(iso) * 60)
+
+
 def exit_code(excerpt: str) -> str:
     match = re.match(r"exit (\d+)", excerpt or "")
     return match.group(1) if match else "?"
@@ -69,7 +73,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     settings = settings or load_settings()
     app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.filters.update(hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since)
+    templates.env.filters.update(hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since, seconds_since=seconds_since)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     run_lock = threading.Lock()
     settings.runs_dir.mkdir(parents=True, exist_ok=True)

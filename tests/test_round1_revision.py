@@ -174,11 +174,27 @@ def test_receipt_prints_fda_url_names_endpoint_and_puts_results_above_code(clien
     c, runs = client
     save(runs, good_record())
     page = c.get("/runs/ab12/receipt").text
-    assert "https://www.fda.gov/science-research/liver-toxicity-knowledge-base-ltkb/drug-induced-liver-injury-rank-dilirank-dataset" in page
+    assert "https://www.fda.gov/science-research/liver-toxicity-knowledge-base-ltkb/drug-induced-liver-injury-rank-dilirank-20-dataset" in page
     assert "DILI endpoint of admet-ai" in page
-    assert page.index("<h2>Results</h2>") < page.index("The exact code that ran")
+    assert page.index("<h2 id=\"results\">Results</h2>") < page.index("The exact code that ran")
 
 
 def test_busy_message_is_not_shown_when_no_run_holds_the_lock(client):
     c, _ = client
     assert "A sealed run is in progress" not in c.get("/?busy=1").text
+
+
+def test_running_page_shows_seconds_since_the_last_step(client):
+    c, runs = client
+    rec = good_record()
+    rec["status"] = "running"
+    save(runs, rec)
+    assert "since the last step" in c.get("/runs/ab12/fragment").text
+
+
+def test_finished_page_has_no_progress_line_and_receipt_has_jump_link(client):
+    c, runs = client
+    save(runs, good_record())
+    assert "since the last step" not in c.get("/runs/ab12/fragment").text
+    page = c.get("/runs/ab12/receipt").text
+    assert 'href="#results"' in page and 'id="results"' in page

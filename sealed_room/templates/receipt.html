@@ -17,6 +17,7 @@
 <p class="noprint">
   <a class="btn" href="/runs/{{ x.run_id }}/receipt.json" download="receipt-{{ x.run_id }}.json">Download JSON</a>
   <a class="btn" href="#" onclick="window.print(); return false;">Print</a>
+  <a class="btn" href="#results">Jump to results</a>
 </p>
 
 <h2>Network policy and wall check</h2>
@@ -65,7 +66,7 @@
   {% for f in x.outputs %}<tr><td>out</td><td class="mono">{{ f.name }}</td><td class="mono hash">{{ f.sha256 }}</td></tr>{% endfor %}
 </table>
 
-<h2>Results</h2>
+<h2 id="results">Results</h2>
 {% if x.results %}
   <table>
     <tr><th>Compound</th><th>DILI endpoint of {{ (x.tool.spec or "the tool").split("==")[0] }} (tool output)</th><th>Reference label</th></tr>
