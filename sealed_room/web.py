@@ -37,7 +37,7 @@ HERE = Path(__file__).resolve().parent
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")
 STAGED_MAX_AGE_S = 3600
-STAGED_MAX_FILES = 40
+STAGED_MAX_FILES = 40  # held uploads (pairs of files), not single files
 NAME_MAX = 80
 ACCESS_COOKIE = "stm_access"
 ACCESS_COOKIE_MAX_AGE_S = 12 * 3600
@@ -133,6 +133,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     attach_lock = threading.Lock()
     app.state.controls = controls
     app.state.active_run = None
+    app.state.run_lock = run_lock
 
     def tool_context(error: str | None = None) -> dict:
         return {"rules": settings.rules, "error": error, "approved_tool": APPROVED_TOOL_LABEL, "card": TOOL_CARD}
@@ -231,6 +232,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             validate_study(source_path)
         except IntakeError as exc:
             _discard(staged)
+            if token:
+                (settings.runs_dir / "_staging" / f"{token}.json").unlink(missing_ok=True)
             return templates.TemplateResponse(request, "data.html", data_context(str(exc)), status_code=400)
         if not run_lock.acquire(blocking=False):
             if not token:
@@ -239,7 +242,11 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             return RedirectResponse("/?busy=1", status_code=303)
         try:
             control = RunControl()
-            run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic, control)
+            try:
+                run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic, control)
+            except FileNotFoundError:  # the held upload was swept between the preview and the confirm
+                run_lock.release()
+                return templates.TemplateResponse(request, "data.html", data_context("That file is no longer held. Choose it again."), status_code=400)
             controls.add(run_request.run_id, control)
             app.state.active_run = run_request.run_id
         except Exception:
@@ -399,15 +406,22 @@ def _keep_staged(staged: Path, display: str, synthetic: bool) -> str:
 
 
 def _sweep_staged(folder: Path) -> None:
-    """Remove staged uploads nobody confirmed within the hour."""
+    """Remove held uploads nobody confirmed within the hour, and the oldest pairs beyond a cap (a token is a .csv plus a .json)."""
     cutoff = time.time() - STAGED_MAX_AGE_S
-    files = sorted((f for f in folder.glob("*") if f.is_file()), key=lambda f: f.stat().st_mtime, reverse=True)
-    for rank, old in enumerate(files):
+    pairs: dict[str, list[Path]] = {}
+    for f in folder.glob("*"):
+        if f.is_file():
+            pairs.setdefault(f.stem, []).append(f)
+    def newest(files: list[Path]) -> float:
         try:
-            if old.stat().st_mtime < cutoff or rank >= STAGED_MAX_FILES:  # old, or beyond the newest few
-                old.unlink(missing_ok=True)
+            return max(x.stat().st_mtime for x in files)
         except OSError:
-            continue
+            return 0.0
+    ordered = sorted(pairs.values(), key=newest, reverse=True)
+    for rank, files in enumerate(ordered):
+        if newest(files) < cutoff or rank >= STAGED_MAX_FILES:
+            for old in files:
+                old.unlink(missing_ok=True)
 
 
 def _take_staged(runs_dir: Path, token: str) -> tuple[Path | None, str, bool]:
@@ -433,8 +447,13 @@ def _record_attachment(runs_dir: Path, run_id: str, name: str) -> None:
         return  # the first attachment stands
     data.setdefault("decisions", {})["attached"] = {"name": name, "at": now_iso()}
     with tempfile.NamedTemporaryFile("w", dir=path.parent, suffix=".tmp", delete=False) as fh:
+        tmp = fh.name
         fh.write(json.dumps(data, indent=2))
-    os.replace(fh.name, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _clean_name(name: str) -> str:

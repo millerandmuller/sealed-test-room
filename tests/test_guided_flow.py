@@ -413,7 +413,7 @@ def test_service_stop_at_close_closes_the_room_and_says_so(guided, runner):
     thread.join(5)
     snap = record.snapshot()
     assert snap["status"] == "completed" and snap["decisions"]["close_room"]["by"] == "shutdown" and runner.rooms == set()
-    assert any("service stopped" in n for n in snap["notes"]) and not validate_receipt(build_receipt(snap))
+    assert any("service was stopping" in n for n in snap["notes"]) and not validate_receipt(build_receipt(snap))
 
 
 def test_a_dead_run_does_not_offer_the_gate(client):
@@ -443,7 +443,7 @@ def test_failed_run_after_copy_in_does_not_claim_no_data_went_in(client):
     assert "before any of your data went in" not in page and "after your file had gone in" in page
     rec2 = good_record(); rec2.update(run_id="cd34", status="failed", error="x", inputs=[], outputs=[], decisions={})
     save(runs, rec2)
-    assert "before your file went in" in c.get("/runs/cd34").text
+    assert "did not go in" in c.get("/runs/cd34").text
 
 
 def test_a_leaked_wall_is_drawn_as_a_leak_not_as_a_second_door():
@@ -466,20 +466,6 @@ def test_unverified_download_room_is_flagged_and_unverified_sealed_room_keeps_th
     p = picture(rec)
     html = TemplateRenderer.render(p)
     assert p["copy_in_room"] and html.count("NOT proven gone") == 2 and not p["all_gone"]
-
-
-def test_concurrent_attach_keeps_the_first_name_and_a_valid_record(client):
-    c, runs = client
-    save(runs, good_record())
-    codes = []
-    def attach(i):
-        codes.append(c.post("/runs/ab12/attach", data={"name": f"Person{i}"}, follow_redirects=False).status_code)
-    threads = [threading.Thread(target=attach, args=(i,)) for i in range(16)]
-    [t.start() for t in threads]; [t.join() for t in threads]
-    assert set(codes) == {303}
-    stored = json.loads((runs / "ab12" / "run.json").read_text())
-    assert stored["decisions"]["attached"]["name"].startswith("Person")
-    assert not list((runs / "ab12").glob("*.tmp"))
 
 
 def test_attached_name_loses_control_and_direction_characters_and_is_capped(client):
@@ -516,13 +502,6 @@ def test_declined_run_needs_only_the_sealed_room_in_its_record():
     assert not any("download room" in why for why in unclean_reasons(rec))
     rec2 = copy.deepcopy(rec); rec2["status"] = "failed"
     assert any("download room" in why for why in unclean_reasons(rec2))
-
-
-def test_held_upload_survives_a_busy_redirect_and_is_removed_after_a_run_starts(client):
-    c, runs = client
-    page = c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")}).text
-    token = page.split('name="token" value="')[1].split('"')[0]
-    assert (runs / "_staging" / f"{token}.csv").is_file()
 
 
 def test_declined_receipt_does_not_claim_an_install(client):
@@ -564,3 +543,139 @@ def test_busy_notice_links_to_the_run_in_progress(client):
     with lock:
         page = c.get("/?busy=1").text
     assert "Open the run in progress" in page and "/runs/ab12" in page
+
+
+# --- second review: wording that must not lie, and tests that can fail ---------------------------------------------
+
+def test_failed_run_after_a_yes_but_without_an_input_hash_does_not_say_the_file_stayed_out(client):
+    c, runs = client
+    rec = good_record()
+    rec.update(status="failed", error="TransferError: study file hash differs after copy-in", inputs=[], outputs=[],
+               decisions={"send_file": {"answer": "yes", "at": "2026-11-04T10:00:30+00:00"}})
+    save(runs, rec)
+    page = c.get("/runs/ab12").text
+    assert "may have entered the room" in page and "before you were asked" not in page and "did not go in" not in page
+
+
+def test_fetched_but_not_installed_is_not_called_nothing_fetched(client):
+    c, runs = client
+    rec = good_record()
+    rec.update(status="failed", error="RuntimeError: install failed", inputs=[], outputs=[], results_preview=None)
+    rec["tool"] = {"spec": "admet-ai==2.0.1", "wheels": [{"name": "w.whl", "sha256": H}], "wheel_archive_sha256": H, "version_installed": None}
+    save(runs, rec)
+    page = c.get("/runs/ab12/receipt").text
+    assert "was fetched but not installed" in page and "nothing was fetched or installed" not in page and "installed offline" not in page
+
+
+def test_receipt_lede_says_not_installed_when_no_version(client):
+    c, runs = client
+    rec = gated_record(); rec.update(status="declined", awaiting=None, finished="2026-11-04T10:01:00+00:00")
+    rec["tool"] = {"spec": "admet-ai==2.0.1", "wheels": [], "wheel_archive_sha256": None, "version_installed": None}
+    save(runs, rec)
+    assert "not installed in this run &middot; started" in c.get("/runs/ab12/receipt").text
+
+
+def test_shutdown_close_is_not_described_as_nobody_closing_it(client):
+    c, runs = client
+    rec = good_record(); rec["decisions"] = {"close_room": {"by": "shutdown", "at": "2026-11-04T10:02:00+00:00"}}
+    save(runs, rec)
+    page = c.get("/runs/ab12").text
+    assert "service was stopping" in page and "nobody closed it in time" not in page
+
+
+def test_heading_says_removal_not_verified_when_a_room_is_not_proven_gone(client):
+    c, runs = client
+    rec = base_record(); rec["rooms"][1]["verified_absent"] = None
+    save(runs, rec)
+    assert "Room closed, removal not verified" in c.get("/runs/ab12").text
+
+
+def test_all_gone_looks_at_every_room_not_the_last_of_each_kind():
+    rec = base_record()
+    older = dict(rec["rooms"][1], id="sr-old", destroyed=None, verified_absent=None)
+    rec["rooms"] = [older] + rec["rooms"]
+    assert picture(rec)["all_gone"] is False
+    assert picture(base_record())["all_gone"] is True and picture({**base_record(), "rooms": []})["all_gone"] is False
+
+
+def test_attach_writes_are_serialized_and_the_first_name_stands(client, monkeypatch):
+    import time
+    import sealed_room.web as web
+    c, runs = client
+    save(runs, good_record())
+    active, peak, real = [0], [0], web._record_attachment
+
+    def slow(runs_dir, run_id, name):
+        active[0] += 1; peak[0] = max(peak[0], active[0])
+        time.sleep(0.02)
+        real(runs_dir, run_id, name)
+        active[0] -= 1
+
+    monkeypatch.setattr(web, "_record_attachment", slow)
+    threads = [threading.Thread(target=lambda i=i: c.post("/runs/ab12/attach", data={"name": f"P{i}"})) for i in range(8)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    assert peak[0] == 1, "two attachments were written at the same time"
+    assert json.loads((runs / "ab12" / "run.json").read_text())["decisions"]["attached"]["name"].startswith("P")
+
+
+def test_attach_does_not_overwrite_an_existing_attachment_even_if_the_check_is_skipped(client):
+    import sealed_room.web as web
+    c, runs = client
+    rec = good_record(); rec["decisions"] = {"attached": {"name": "First", "at": "2026-11-04T10:03:00+00:00"}}
+    save(runs, rec)
+    web._record_attachment(runs, "ab12", "Second")            # called directly: the function itself must refuse
+    assert json.loads((runs / "ab12" / "run.json").read_text())["decisions"]["attached"]["name"] == "First"
+
+
+def test_leaving_the_app_releases_every_waiting_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
+    app = create_app(load_settings(), cleanup=False)
+    control = RunControl()
+    with TestClient(app):
+        app.state.controls.add("ab12", control)
+    assert control.wait_gate(0) == "shutdown" and control.wait_close(0) == "shutdown"
+
+
+def test_busy_redirect_keeps_the_held_upload_and_a_started_run_removes_it(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    page = c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")}).text
+    token = page.split('name="token" value="')[1].split('"')[0]
+    held = [runs / "_staging" / f"{token}.csv", runs / "_staging" / f"{token}.json"]
+    assert all(f.is_file() for f in held)
+    form = {"tool": "admet-ai", "source": "upload", "token": token}
+    with c.app.state.run_lock:                                     # another run holds the single slot
+        res = c.post("/runs", data=form, follow_redirects=False)
+    assert res.status_code == 303 and res.headers["location"] == "/?busy=1" and all(f.is_file() for f in held)
+    monkeypatch.setattr(web, "run_to_completion", lambda *a, **k: None)
+    res = c.post("/runs", data=form, follow_redirects=False)
+    assert res.status_code == 303 and res.headers["location"].startswith("/runs/")
+    assert not any(f.exists() for f in held)
+
+
+def test_sweeps_remove_old_and_surplus_held_uploads_at_startup_and_on_preview(tmp_path, monkeypatch):
+    import os, time
+    import sealed_room.web as web
+    folder = tmp_path / "runs" / "_staging"
+    folder.mkdir(parents=True)
+    old = time.time() - web.STAGED_MAX_AGE_S - 60
+    for name in ("aaaa.csv", "aaaa.json"):
+        (folder / name).write_text("x"); os.utime(folder / name, (old, old))
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
+    create_app(load_settings(), cleanup=False)
+    assert not list(folder.glob("aaaa.*")), "old held upload survived startup"
+    for i in range(web.STAGED_MAX_FILES + 5):
+        for ext in ("csv", "json"):
+            f = folder / f"t{i:03d}.{ext}"; f.write_text("x"); os.utime(f, (time.time() - 100 + i, time.time() - 100 + i))
+    web._sweep_staged(folder)
+    kept = {f.stem for f in folder.glob("*")}
+    assert len(kept) == web.STAGED_MAX_FILES and f"t{web.STAGED_MAX_FILES + 4:03d}" in kept and "t000" not in kept
+
+
+def test_a_held_upload_that_fails_at_confirm_leaves_no_files(client):
+    c, runs = client
+    page = c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")}).text
+    token = page.split('name="token" value="')[1].split('"')[0]
+    (runs / "_staging" / f"{token}.csv").write_text("not,a,study\n")   # damaged after the preview
+    res = c.post("/runs", data={"tool": "admet-ai", "source": "upload", "token": token})
+    assert res.status_code == 400 and not list((runs / "_staging").glob(f"{token}.*"))

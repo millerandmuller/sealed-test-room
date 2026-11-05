@@ -25,7 +25,8 @@
       <div class="banner calm"><strong>You stopped here.</strong> Your file did not go in. The room was destroyed{% if p.sealed == "gone" %} and verified absent{% endif %}; nothing entered it.</div>
     {% elif r.status in ("failed", "aborted") %}
       {% if r.inputs %}<p class="small">The run stopped after your file had gone in. The audit trail shows what happened to it and whether the room was proven gone.</p>
-      {% else %}<p class="small">The run stopped before your file went in: no input is recorded.</p>{% endif %}
+      {% elif r.decisions.send_file and r.decisions.send_file.answer == "yes" %}<p class="small">The run stopped after you said yes. Your file may have entered the room: no input hash was recorded, so check the audit trail for the copy step and for whether the room was proven gone.</p>
+      {% else %}<p class="small">The run stopped before you were asked or before you said yes: your file did not go in.</p>{% endif %}
     {% endif %}
     <h2>Walls tested</h2>
     {% if r.wall_check %}
@@ -96,7 +97,8 @@
     {% if r.status == "completed" %}
       <div class="banner {{ 'ok' if (clean and p.all_gone) else 'bad' }}"><strong>{{ "Room gone, verified." if p.all_gone else "Removal NOT verified: a room may still exist." }}</strong>
         {% for room in r.rooms if room.destroyed %}<div class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }} &middot; {% if room.verified_absent %}verified absent {{ room.verified_absent|hhmmss }}{% else %}<strong>STILL LISTED</strong>{% endif %}</div>{% endfor %}
-        {% if r.decisions.close_room and r.decisions.close_room.by in ("timeout", "shutdown") %}<div class="small" style="margin-top:6px">The room was closed automatically because nobody closed it in time. The receipt says so.</div>{% endif %}
+        {% if r.decisions.close_room and r.decisions.close_room.by == "timeout" %}<div class="small" style="margin-top:6px">The room was closed automatically because nobody closed it in time. The receipt says so.</div>
+        {% elif r.decisions.close_room and r.decisions.close_room.by == "shutdown" %}<div class="small" style="margin-top:6px">The service was stopping, so the room was closed without waiting for you. The receipt says so.</div>{% endif %}
         {% if not clean %}<div class="small" style="margin-top:6px">The receipt is NOT CLEAN; open it to see why.</div>{% endif %}
       </div>
       <h2>Attach the receipt to the study</h2>

@@ -50,9 +50,9 @@ def picture(record: dict) -> dict:
         facts.append(f"Calls through the door: {len(calls)}.")
 
     allowed_host = (record.get("network") or {}).get("allowed_host")
-    removed = [r for r in (sealed, download) if r and r.get("destroyed")]
+    every = record.get("rooms") or []
     return {
-        "all_gone": bool(removed) and all(r.get("verified_absent") for r in removed) and not any(not r.get("destroyed") for r in (sealed, download) if r),
+        "all_gone": bool(every) and all(r.get("destroyed") and r.get("verified_absent") for r in every),  # every room ever made, not the last of each kind
         "with_you": bool(study),                                     # the original stays with the person
         "sealed": sealed_state,
         "download": download_state,

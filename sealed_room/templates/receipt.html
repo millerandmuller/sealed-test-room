@@ -87,6 +87,9 @@
 {% if x.tool.wheels %}<details class="noprint"><summary class="small">Show every wheel and its SHA-256</summary>
   <table>{% for w in x.tool.wheels %}<tr><td class="mono">{{ w.name }}</td><td class="mono hash">{{ w.sha256 }}</td></tr>{% endfor %}</table>
 </details>{% endif %}
+{% elif x.tool.wheels or x.tool.wheel_archive_sha256 %}
+<div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was fetched but not installed in this run.</p>
+  <p class="small" style="margin:6px 0 0">{{ x.tool.wheels|length }} wheels, packed as one archive. Archive SHA-256: <span class="mono hash">{{ x.tool.wheel_archive_sha256 }}</span></p></div>
 {% else %}
 <div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was not installed in this run: nothing was fetched or installed.</p></div>
 {% endif %}

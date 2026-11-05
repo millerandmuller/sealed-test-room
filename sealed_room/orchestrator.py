@@ -180,7 +180,7 @@ def _wait_for_close(control: RunControl | None, record: RunRecord, settings: Set
     if by == "timeout":
         record.add_note(f"Nobody closed the room within {wait_s // 60} minutes, so it was closed automatically.")
     elif by == "shutdown":
-        record.add_note("The service stopped while the room was waiting to be closed, so it was closed automatically.")
+        record.add_note("The service was stopping, so the room was closed without waiting for you.")
     return {"person": "closed by you", "timeout": "closed automatically after no answer"}.get(by, "closed automatically when the service stopped")
 
 
