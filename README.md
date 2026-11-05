@@ -36,9 +36,9 @@ v1 supports one approved tool (`admet-ai` 2.0.1); the policy (one door, wall che
 
 ![Architecture: web app and orchestrator on a Vultr VX1 host; a data-free download room; a sealed room with one door to Vultr Serverless Inference; a receipt](docs/architecture.svg)
 
-1. **Download room** (a Microsandbox microVM, default network, no study data inside): the tool's wheels are fetched, hashed, packed into one tar file and copied out. The room is destroyed.
-2. **Sealed room** (a microVM created with `--no-net` and one allow rule for the inference endpoint's IP on port 443): the wheels are copied in and installed offline.
-3. **Wall check**, before any data enters: from inside the sealed room the agent tries the package index, the Git host and the inference endpoint. Two must be refused and one must succeed.
+1. **Sealed room** (a microVM created with `--no-net` and one allow rule for the inference endpoint's IP on port 443) is opened first, empty.
+2. **Wall check**, before anything else enters: from inside the sealed room the agent tries the package index, the Git host and the inference endpoint. Two must be refused and one must succeed. If not, the run stops and no tool is fetched.
+3. **Download room** (a Microsandbox microVM, default network, no study data inside, 1024 MB): the tool's wheels are fetched, hashed, packed into one tar file and copied out. The room is destroyed. The tar file is copied into the sealed room and installed offline.
 4. **Data in, results out**: the study file is copied in (SHA-256 recorded), the agent writes and runs a runner script, the results file is copied out (SHA-256 recorded). The host checks the results itself.
 5. **The door**: the room makes its one result-check call to the endpoint (see above).
 6. **Destroy check**: the room is removed and `msb list` is run to prove it is gone.
@@ -56,7 +56,7 @@ The app is served at **https://45-63-20-61.sslip.io**. It asks for an access cod
 
 The site is served over HTTPS (Caddy with a Let's Encrypt certificate, on a hostname derived from the host's IP address through the sslip.io wildcard DNS service). Some networks refuse to resolve sslip.io names; for those, `http://45.63.20.61` serves the same app over plain HTTP, where the access code is not encrypted in transit.
 
-Choose the synthetic demo study and press "Run in sealed room". The wall-check rows appear after about 20 seconds; a full run takes a few minutes. Only one run can be in progress at a time.
+Choose the synthetic demo study and press "Run in sealed room". The wall-check rows appear after a few seconds; a full run takes a few minutes. Only one run can be in progress at a time.
 
 To run it yourself: Linux host with `/dev/kvm`, `msb` 0.7.13, Python 3.12, `pip install -r requirements.txt`, set `VULTR_INFERENCE_API_KEY` and `JUDGE_ACCESS_CODE`, then `uvicorn sealed_room.web:create_app --factory`. Tests: `pip install -r requirements-dev.txt && pytest`.
 

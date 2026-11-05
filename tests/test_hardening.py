@@ -54,13 +54,13 @@ def stubbed(monkeypatch, tmp_path, msb, runner):
     return calls, request, record, msb
 
 
-def test_wall_check_runs_before_install_and_before_the_agent(stubbed):
+def test_wall_check_runs_before_fetch_install_and_the_agent(stubbed):
     calls, request, record, msb = stubbed
     execute_run(load_settings(), msb, None, request, record)
-    assert calls == ["fetch", "wall_check", "install", "agent"]
+    assert calls == ["wall_check", "fetch", "install", "agent"]
 
 
-def test_failed_wall_check_means_no_install_no_agent_and_rooms_gone(stubbed, monkeypatch, runner):
+def test_failed_wall_check_means_no_fetch_no_install_no_agent_and_rooms_gone(stubbed, monkeypatch, runner):
     calls, request, record, msb = stubbed
 
     def fail(*a, **k):
@@ -70,7 +70,7 @@ def test_failed_wall_check_means_no_install_no_agent_and_rooms_gone(stubbed, mon
     monkeypatch.setattr(orchestrator, "_wall_check", fail)
     execute_run(load_settings(), msb, None, request, record)
     snap = record.snapshot()
-    assert calls == ["fetch", "wall_check"]
+    assert calls == ["wall_check"]  # nothing is fetched into a room that failed its wall check
     assert snap["status"] == "failed" and "room not sealed" in snap["error"]
     assert snap["inputs"] == [] and runner.rooms == set()
     assert all(r["verified_absent"] for r in snap["rooms"])
@@ -199,3 +199,12 @@ def test_finished_page_has_no_progress_line_and_receipt_has_jump_link(client):
     assert "since the last step" not in c.get("/runs/ab12/fragment").text
     page = c.get("/runs/ab12/receipt").text
     assert 'href="#results"' in page and 'id="results"' in page
+
+
+def test_download_room_gets_the_smaller_memory_share(msb, runner, record):
+    from sealed_room.rooms import DOWNLOAD_MEMORY_MB
+    mgr = RoomManager(msb, record, "python:3.12", 2, 4096)
+    mgr.open_download("bbbb")
+    mgr.open_sealed("bbbb", "10.0.0.1", 443, {})
+    created = [c for c in runner.calls if "create" in c]
+    assert str(DOWNLOAD_MEMORY_MB) in created[0] and "4096" in created[1]

@@ -92,10 +92,6 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     record.update(honesty=_honesty_lines(request.synthetic))  # first, so a failed run's receipt carries them too
     run_dir = record.dir
 
-    _phase(record, "download room", "Opening a download room (no study data inside) to fetch the tool.")
-    fetched = _fetch_with_retry(msb, rooms, record, request.run_id, tool, run_dir, deadline)
-    _check_clock(deadline)
-
     allowed = settings.allowed_host
     blocked = settings.wall_check["expect_blocked"]
     pins = pins_for([allowed, *blocked], resolver)
@@ -104,8 +100,12 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     sealed = rooms.open_sealed(request.run_id, pins[allowed], settings.allowed_port, pins)
     _phase(record, "sealed room", f"Sealed room open. Policy: {sealed.policy}")
 
-    # The wall check needs only the bare room, so it runs first: the cage is tested before the tool is even installed.
+    # The wall check needs only the bare room, so it runs first: the cage is tested before the tool is even fetched.
     _wall_check(msb, sealed, record, settings)
+    _check_clock(deadline)
+
+    _phase(record, "download room", "Opening a download room (no study data inside) to fetch the tool.")
+    fetched = _fetch_with_retry(msb, rooms, record, request.run_id, tool, run_dir, deadline)
     _check_clock(deadline)
 
     _phase(record, "offline install", f"Installing {tool['spec']} from the fetched wheels. The package index is unreachable from here.")

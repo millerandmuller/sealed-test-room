@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
   <title id="t">Sealed Test Room: how a run is built</title>
-  <desc id="d">The scientist uses the web app on a Vultr VX1 host. The host opens a download room with open network and no study data, then a sealed room that can reach only the Vultr inference endpoint. The agent loop on the host talks to the endpoint. The sealed room makes one result-check call through its one door. A receipt is written and the rooms are destroyed.</desc>
+  <desc id="d">The scientist uses the web app on a Vultr VX1 host. The host opens a sealed room that can reach only the Vultr inference endpoint and tests its walls, then opens a download room with open network and no study data to fetch the tool. The agent loop on the host talks to the endpoint. The sealed room makes one result-check call through its one door. A receipt is written and the rooms are destroyed.</desc>
   <rect width="900" height="430" fill="#ffffff"/>
   <rect x="20" y="20" width="860" height="330" rx="10" fill="#f6f7f9" stroke="#9aa3ad"/>
   <text x="36" y="46" font-size="14" font-weight="700" fill="#1f2933">Vultr VX1 host (New York): web app, orchestrator, Microsandbox</text>

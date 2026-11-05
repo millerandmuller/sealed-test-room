@@ -50,6 +50,10 @@ def policy_string(args: list[str]) -> str:
     return " ".join(f'"{a}"' if a.startswith("allow@") else a for a in args) if args else "default network (no study data in this room)"
 
 
+# The download room only runs pip, and now coexists with the sealed room, so it gets a smaller share of the host.
+DOWNLOAD_MEMORY_MB = 1024
+
+
 class RoomManager:
     def __init__(self, msb: Msb, record: RunRecord, image: str, cpus: int, memory_mb: int):
         self._msb = msb
@@ -62,7 +66,7 @@ class RoomManager:
     def open_download(self, run_id: str, attempt: int = 1) -> Room:
         """A retry gets its own name (dl2-...) so each room keeps its own lifecycle entries on the receipt."""
         name = f"dl-{run_id}" if attempt == 1 else f"dl{attempt}-{run_id}"
-        return self._open(name, "download", [], {})
+        return self._open(name, "download", [], {}, memory_mb=DOWNLOAD_MEMORY_MB)
 
     def open_sealed(self, run_id: str, allow_ip: str, port: int, pins: dict[str, str]) -> Room:
         args = sealed_policy_args(allow_ip, port)
@@ -103,11 +107,11 @@ class RoomManager:
                 problems.append(f"{type(exc).__name__}: {exc}")
         return problems
 
-    def _open(self, name: str, kind: str, net_args: list[str], pins: dict[str, str]) -> Room:
+    def _open(self, name: str, kind: str, net_args: list[str], pins: dict[str, str], memory_mb: int | None = None) -> Room:
         room = Room(id=name, kind=kind, policy=policy_string(net_args), pinned_hosts=dict(pins))
         # Registered before the create call: if create fails after the VM exists, close_all still removes it.
         self._rooms[name] = room
-        self._msb.create(name, self._image, self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
+        self._msb.create(name, self._image, memory_mb or self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
         self._record.add_room(
             {"id": name, "kind": kind, "policy": room.policy, "image": self._image,
              "pinned_hosts": dict(pins), "created": now_iso(), "destroyed": None,
