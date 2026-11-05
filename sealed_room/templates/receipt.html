@@ -3,9 +3,11 @@
 {% block body %}
 {% if audit %}<p class="noprint small"><a href="/runs/{{ x.run_id }}">Back to the run</a> &middot; This is the audit trail: the full record of the run as it stands now.</p>{% endif %}
 <h1>{{ "Audit trail" if audit else "Receipt" }} for run {{ x.run_id }}</h1>
-<p class="lede">Tool <span class="mono">{{ x.tool.spec }}</span>, version <span class="mono">{{ x.tool.version_installed or "not installed" }}</span> &middot; started {{ x.started|hhmmss }} UTC{% if x.finished %}, finished {{ x.finished|hhmmss }} UTC{% endif %}</p>
+<p class="lede">Tool <span class="mono">{{ x.tool.spec }}</span>, {% if x.tool.version_installed %}version <span class="mono">{{ x.tool.version_installed }}</span>{% else %}not installed in this run{% endif %} &middot; started {{ x.started|hhmmss }} UTC{% if x.finished %}, finished {{ x.finished|hhmmss }} UTC{% endif %}</p>
 
-{% if x.status == "declined" %}
+{% if x.status == "running" %}
+  <div class="banner calm"><strong>IN PROGRESS.</strong> This is the record so far. It is judged clean or not only when the run ends.</div>
+{% elif x.status == "declined" %}
   <div class="banner calm"><strong>STOPPED BY YOU.</strong> You chose not to send the file in. Nothing entered the room. All rooms proven absent: <strong>{{ "yes" if x.destroy.all_rooms_verified_absent else "NO" }}</strong>.</div>
 {% elif x.clean %}
   <div class="banner ok"><strong>CLEAN.</strong> The run completed, the wall check passed, and every room was proven absent.</div>
@@ -22,7 +24,7 @@
 {% endif %}
 
 <p class="noprint">
-  <a class="btn" href="/runs/{{ x.run_id }}/audit" title="The full record of this run, as it stands now">Audit trail</a>
+  {% if not audit %}<a class="btn" href="/runs/{{ x.run_id }}/audit" title="The full record of this run, as it stands now">Audit trail</a>{% endif %}
   <a class="btn" href="/runs/{{ x.run_id }}/receipt.json" download="receipt-{{ x.run_id }}.json">Download JSON</a>
   <a class="btn" href="#" onclick="window.print(); return false;">Print</a>
   <a class="btn" href="#results">Jump to results</a>
@@ -31,8 +33,8 @@
 {% if x.decisions %}
 <h2>What you decided</h2>
 <table>
-  {% if x.decisions.send_file %}<tr><td>Send the file in?</td><td class="mono">{{ x.decisions.send_file.answer }}</td><td class="mono small">{{ x.decisions.send_file.at|stamp }} UTC</td></tr>{% endif %}
-  {% if x.decisions.close_room %}<tr><td>Close the room</td><td class="mono">{{ x.decisions.close_room.by }}</td><td class="mono small">{{ x.decisions.close_room.at|stamp }} UTC</td></tr>{% endif %}
+  {% if x.decisions.send_file %}<tr><td>Send the file in?</td><td class="mono">{{ {"yes": "yes, send it in", "no": "no", "timeout": "no answer, counted as no", "shutdown": "service stopped, counted as no", "automatic": "automatic (no person in this run)"}.get(x.decisions.send_file.answer, x.decisions.send_file.answer) }}</td><td class="mono small">{{ x.decisions.send_file.at|stamp }} UTC</td></tr>{% endif %}
+  {% if x.decisions.close_room %}<tr><td>Close the room</td><td class="mono">{{ {"person": "closed by you", "timeout": "closed automatically: nobody closed it in time", "shutdown": "closed automatically: the service stopped", "automatic": "automatic (no person in this run)"}.get(x.decisions.close_room.by, x.decisions.close_room.by) }}</td><td class="mono small">{{ x.decisions.close_room.at|stamp }} UTC</td></tr>{% endif %}
   {% if x.decisions.attached %}<tr><td>Receipt attached to the study</td><td class="mono">{{ x.decisions.attached.name }}</td><td class="mono small">{{ x.decisions.attached.at|stamp }} UTC</td></tr>{% endif %}
 </table>
 {% endif %}
@@ -77,13 +79,17 @@
 </div>
 
 <h2>Tool</h2>
+{% if x.tool.version_installed %}
 <div class="box">
   <p style="margin:0"><span class="mono">{{ x.tool.spec }}</span> installed offline in the sealed room, version <span class="mono">{{ x.tool.version_installed }}</span>.</p>
   <p class="small" style="margin:6px 0 0">{{ x.tool.wheels|length }} wheels, packed as one archive. Archive SHA-256: <span class="mono hash">{{ x.tool.wheel_archive_sha256 }}</span></p>
 </div>
-<details class="noprint"><summary class="small">Show every wheel and its SHA-256</summary>
+{% if x.tool.wheels %}<details class="noprint"><summary class="small">Show every wheel and its SHA-256</summary>
   <table>{% for w in x.tool.wheels %}<tr><td class="mono">{{ w.name }}</td><td class="mono hash">{{ w.sha256 }}</td></tr>{% endfor %}</table>
-</details>
+</details>{% endif %}
+{% else %}
+<div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was not installed in this run: nothing was fetched or installed.</p></div>
+{% endif %}
 
 <h2>Files</h2>
 <table>

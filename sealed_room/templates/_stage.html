@@ -96,6 +96,7 @@
     {% if r.status == "completed" %}
       <div class="banner {{ 'ok' if (clean and p.all_gone) else 'bad' }}"><strong>{{ "Room gone, verified." if p.all_gone else "Removal NOT verified: a room may still exist." }}</strong>
         {% for room in r.rooms if room.destroyed %}<div class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }} &middot; {% if room.verified_absent %}verified absent {{ room.verified_absent|hhmmss }}{% else %}<strong>STILL LISTED</strong>{% endif %}</div>{% endfor %}
+        {% if r.decisions.close_room and r.decisions.close_room.by in ("timeout", "shutdown") %}<div class="small" style="margin-top:6px">The room was closed automatically because nobody closed it in time. The receipt says so.</div>{% endif %}
         {% if not clean %}<div class="small" style="margin-top:6px">The receipt is NOT CLEAN; open it to see why.</div>{% endif %}
       </div>
       <h2>Attach the receipt to the study</h2>

@@ -132,6 +132,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
     attach_lock = threading.Lock()
     app.state.controls = controls
+    app.state.active_run = None
 
     def tool_context(error: str | None = None) -> dict:
         return {"rules": settings.rules, "error": error, "approved_tool": APPROVED_TOOL_LABEL, "card": TOOL_CARD}
@@ -160,7 +161,9 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             return access_page(request)
         # Only say "in progress" while a run really holds the lock (a stale bookmark must not claim it).
         error = "A sealed run is in progress. Wait for it to finish, then run again." if busy and run_lock.locked() else None
-        return templates.TemplateResponse(request, "tool.html", tool_context(error))
+        context = tool_context(error)
+        context["active_run"] = app.state.active_run if error else None
+        return templates.TemplateResponse(request, "tool.html", context)
 
     @app.post("/data", response_class=HTMLResponse)
     @app.get("/data", response_class=HTMLResponse)
@@ -238,6 +241,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             control = RunControl()
             run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic, control)
             controls.add(run_request.run_id, control)
+            app.state.active_run = run_request.run_id
         except Exception:
             run_lock.release()
             raise
@@ -251,6 +255,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
                 run_to_completion(settings, run_request, record)
             finally:
                 controls.drop(run_request.run_id)
+                app.state.active_run = None
                 run_lock.release()
 
         threading.Thread(target=work, name=f"run-{run_request.run_id}", daemon=False).start()

@@ -12,7 +12,7 @@
 
   {# sealed room: one box, one door #}
   {% if p.sealed %}
-    <g class="sealed {{ 'vanish' if p.sealed == 'gone' else ('unverified' if p.sealed == 'unverified' else '') }} {{ 'fresh' if fresh_gone else 'settled' }}">
+    <g {{ 'aria-hidden="true"'|safe if p.sealed == 'gone' }} class="sealed {{ 'vanish' if p.sealed == 'gone' else ('unverified' if p.sealed == 'unverified' else '') }} {{ 'fresh' if fresh_gone else 'settled' }}">
       <rect x="300" y="30" width="270" height="230" rx="4" class="room-wall"/>
       <rect x="564" y="124" width="12" height="52" class="room-door {{ 'open' if p.door_calls or (p.walls|selectattr('verdict','equalto','ALLOWED')|list) else '' }}"/>
       <text x="435" y="52" text-anchor="middle" class="cap">Sealed room</text>
@@ -42,7 +42,7 @@
 
   {# download room: open network, no study data, no file slot #}
   {% if p.download %}
-    <g class="download {{ 'vanish' if p.download == 'gone' else '' }}">
+    <g {{ 'aria-hidden="true"'|safe if p.download == 'gone' }} class="download {{ 'vanish' if p.download == 'gone' else '' }}">
       {% if p.download == "unverified" %}<text x="435" y="346" text-anchor="middle" class="warn">removed, NOT proven gone</text>{% endif %}
       <rect x="300" y="286" width="270" height="48" rx="4" class="dl-wall"/>
       <text x="435" y="307" text-anchor="middle" class="cap">Download room: open network</text>

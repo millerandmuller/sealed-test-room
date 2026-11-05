@@ -523,3 +523,44 @@ def test_held_upload_survives_a_busy_redirect_and_is_removed_after_a_run_starts(
     page = c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")}).text
     token = page.split('name="token" value="')[1].split('"')[0]
     assert (runs / "_staging" / f"{token}.csv").is_file()
+
+
+def test_declined_receipt_does_not_claim_an_install(client):
+    c, runs = client
+    rec = gated_record()
+    rec.update(status="declined", awaiting=None, finished="2026-11-04T10:01:00+00:00")
+    rec["tool"] = {"spec": "admet-ai==2.0.1", "wheels": [], "wheel_archive_sha256": None, "version_installed": None}
+    rec["rooms"][0].update(destroyed="2026-11-04T10:01:00+00:00", verified_absent="2026-11-04T10:01:01+00:00")
+    save(runs, rec)
+    for path in ("/runs/ab12/receipt", "/runs/ab12/audit"):
+        page = c.get(path).text
+        assert "installed offline" not in page and "was not installed in this run" in page and "version None" not in page
+        assert "Archive SHA-256" not in page
+
+
+def test_audit_page_mid_run_is_neutral_not_red(client):
+    c, runs = client
+    save(runs, gated_record())
+    page = c.get("/runs/ab12/audit").text
+    assert "IN PROGRESS" in page and "NOT CLEAN" not in page
+
+
+def test_automatic_close_is_said_in_words_on_screen_7_and_the_receipt(client):
+    c, runs = client
+    rec = good_record()
+    rec["decisions"] = {"close_room": {"by": "timeout", "at": "2026-11-04T10:02:00+00:00"}}
+    save(runs, rec)
+    assert "closed automatically because nobody closed it in time" in c.get("/runs/ab12").text
+    assert "closed automatically: nobody closed it in time" in c.get("/runs/ab12/receipt").text
+
+
+def test_busy_notice_links_to_the_run_in_progress(client):
+    c, runs = client
+    import sealed_room.web as web
+    c.app.state.active_run = "ab12"
+    # the notice only appears while the run lock is held; hold it the way a run would
+    lock = next(cell.cell_contents for fn in c.app.routes if getattr(fn, "name", "") == "tool_screen"
+                for cell in (fn.endpoint.__closure__ or ()) if isinstance(cell.cell_contents, type(threading.Lock())))
+    with lock:
+        page = c.get("/?busy=1").text
+    assert "Open the run in progress" in page and "/runs/ab12" in page

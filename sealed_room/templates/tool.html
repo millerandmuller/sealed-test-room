@@ -4,7 +4,7 @@
 <h1>Choose the tool</h1>
 <p class="lede">A new tool, your study data, one door. You decide at every step; the agent does the work.</p>
 
-{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+{% if error %}<div class="banner bad">{{ error }}{% if active_run %} <a href="/runs/{{ active_run }}">Open the run in progress</a>.{% endif %}</div>{% endif %}
 
 <div class="box toolcard">
   <p class="small" style="margin:0 0 4px">The one tool on this demo's approved list</p>
