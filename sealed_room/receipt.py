@@ -24,7 +24,9 @@ def load_reference(path: Path = REFERENCE_PATH) -> dict | None:
 
 def unclean_reasons(record: dict) -> list[str]:
     reasons: list[str] = []
-    if record["status"] != "completed":
+    if record["status"] == "declined":
+        reasons.append("you stopped the run before the file entered the room (not an error: nothing entered it)")
+    elif record["status"] != "completed":
         reasons.append(f"run status is {record['status']}" + (f": {plain_failure(record['error'])}" if record.get("error") else ""))
     if record.get("wall_check_verdict") != "PASSED":
         reasons.append("wall check did not pass")
@@ -36,24 +38,25 @@ def unclean_reasons(record: dict) -> list[str]:
             reasons.append(f"room {room['id']} was not proven absent")
     kinds = {room["kind"] for room in rooms}
     # A run that failed its wall check never opens a download room, by design: nothing is fetched into a room that failed.
-    needed = {"sealed"} if record.get("wall_check_verdict") == "FAILED" else {"download", "sealed"}
+    needed = {"sealed"} if record.get("wall_check_verdict") == "FAILED" or record["status"] == "declined" else {"download", "sealed"}
     if not needed <= kinds:
         reasons.append("the record lacks a download room or a sealed room")
     if len(record.get("wall_check", [])) < 3:
         reasons.append("the wall check has fewer than three rows")
-    if not record.get("inputs"):
-        reasons.append("no input file hash was recorded")
-    if not record.get("outputs"):
-        reasons.append("no output file hash was recorded")
-    if not record.get("results_preview"):
-        reasons.append("the results were not verified")
+    if record["status"] != "declined":
+        if not record.get("inputs"):
+            reasons.append("no input file hash was recorded")
+        if not record.get("outputs"):
+            reasons.append("no output file hash was recorded")
+        if not record.get("results_preview"):
+            reasons.append("the results were not verified")
     door = record.get("door")
     if door is not None and not any(call.get("ok") for call in door.get("calls", [])):
         reasons.append("no call went through the door")
     return reasons
 
 
-def _results_with_reference(record: dict, reference: dict | None) -> list[dict]:
+def results_with_reference(record: dict, reference: dict | None) -> list[dict]:
     known = {c["compound_id"]: c for c in (reference or {}).get("compounds", [])}
     rows = []
     for row in record.get("results_preview") or []:
@@ -95,9 +98,11 @@ def build_receipt(record: dict, reference: dict | None = None) -> dict:
             "steps": record["steps"],
         },
         "door": _door_section(record.get("door")),
-        "results": _results_with_reference(record, reference),
+        "results": results_with_reference(record, reference),
         "reference": reference,
         "destroy": {"all_rooms_verified_absent": bool(record["rooms"]) and all(r.get("verified_absent") for r in record["rooms"])},
+        "study": record.get("study"),
+        "decisions": record.get("decisions", {}),
         "notes": record.get("notes", []),
         "honesty": record.get("honesty", []),
     }

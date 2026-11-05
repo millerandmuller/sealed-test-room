@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body %}
+{% set data_step = true %}
+{% include "_steps.html" with context %}
+<h1>Choose the data</h1>
+<p class="lede">Look at what you are about to hand over. Nothing leaves your hands until you confirm, and even then it goes in only after the room's walls are tested.</p>
+
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+
+<div class="box">
+  <p style="margin:0 0 6px"><strong>{{ upload_name or demo_name }}</strong>
+    {% if not upload_name or synthetic_upload %}<span class="badge synthetic">Synthetic study data</span>{% endif %}</p>
+  <p class="small" style="margin:0 0 8px">{{ preview.row_count }} compounds &middot; columns: <span class="mono">{{ preview.columns|join(", ") }}</span></p>
+  <table class="preview">
+    <tr>{% for c in preview.columns %}<th>{{ c }}</th>{% endfor %}</tr>
+    {% for row in preview.first_rows %}<tr>{% for cell in row %}<td class="mono">{{ cell }}</td>{% endfor %}</tr>{% endfor %}
+  </table>
+  <p class="small" style="margin:8px 0 0">First {{ preview.first_rows|length }} of {{ preview.row_count }} rows.</p>
+  <p class="small hash" style="margin:6px 0 0">SHA-256 <span class="mono">{{ preview.sha256 }}</span></p>
+</div>
+
+<form method="post" action="/runs" enctype="multipart/form-data" onsubmit="var b=this.querySelector('button.primary');b.disabled=true;b.textContent='Opening the room...';">
+  <input type="hidden" name="tool" value="{{ tool }}">
+  {% if token %}
+    <input type="hidden" name="source" value="upload"><input type="hidden" name="token" value="{{ token }}">
+  {% else %}
+    <input type="hidden" name="source" value="demo">
+  {% endif %}
+  <button class="primary" type="submit">Confirm this data and open the room</button>
+  <a class="btn" href="/" style="margin-left:8px">Back</a>
+</form>
+
+<details class="box" style="margin-top:22px" {% if error or token %}open{% endif %}>
+  <summary><strong>Use a different file instead</strong></summary>
+  <form method="post" action="/data/preview" enctype="multipart/form-data">
+    <input type="hidden" name="tool" value="{{ tool }}">
+    <label for="study">A CSV with columns compound_id and smiles</label>
+    <input id="study" type="file" name="study" accept=".csv,text/csv">
+    <label class="choice"><input type="checkbox" name="synthetic" value="yes"> This uploaded file is synthetic data</label>
+    <button class="primary" type="submit" style="margin-top:12px">Preview this file</button>
+  </form>
+</details>
+{% endblock %}

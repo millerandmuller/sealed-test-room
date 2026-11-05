@@ -1,0 +1,6 @@
+{# The seven steps; `current` is the step number on screen (1 and 2 come before a run exists). #}
+{% set names = ["Tool", "Data", "Room", "Agent", "Results", "Close", "Receipt"] %}
+{% set now = screen if screen is defined else (2 if data_step is defined else 1) %}
+<ol class="steps7" aria-label="Seven steps">
+  {% for n in names %}<li class="{{ 'done' if loop.index < now else ('now' if loop.index == now else '') }}"><span>{{ loop.index }}</span> {{ n }}</li>{% endfor %}
+</ol>

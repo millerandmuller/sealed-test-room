@@ -4,7 +4,10 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import hmac
+import json
+import os
 import re
+import secrets
 import tempfile
 import threading
 import time
@@ -16,18 +19,23 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .config import APPROVED_TOOL_LABEL, Settings, load_settings
+from .config import APPROVED_TOOL_LABEL, TOOL_CARD, Settings, load_settings
+from .drawing import picture, screen_for
+from .runctl import ControlRegistry, RunControl
 from .failure_words import plain_failure
-from .intake import MAX_BYTES, IntakeError, validate_study
+from .intake import MAX_BYTES, IntakeError, preview_study, validate_study
 from .msb import Msb
-from .receipt import build_receipt, load_reference, validate_receipt
+from .receipt import build_receipt, load_reference, results_with_reference, unclean_reasons, validate_receipt
 from .rooms import cleanup_orphans
-from .runrecord import load_record, reconcile_stale_runs
+from .runrecord import load_record, now_iso, reconcile_stale_runs
 from .service import prepare_run, run_to_completion
 from .toolinstall import ToolInstallError, check_approved
 
 HERE = Path(__file__).resolve().parent
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4}$")
+TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")
+STAGED_MAX_AGE_S = 3600
+NAME_MAX = 80
 ACCESS_COOKIE = "stm_access"
 ACCESS_COOKIE_MAX_AGE_S = 12 * 3600
 WRONG_CODE_DELAY_S = 1.0
@@ -110,8 +118,16 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         message = error or (None if configured else "No access code is configured on this host.")
         return templates.TemplateResponse(request, "access.html", {"error": message}, status_code=status)
 
-    def intake_context(request: Request, error: str | None = None) -> dict:
-        return {"rules": settings.rules, "error": error, "demo_rows": 12, "approved_tool": APPROVED_TOOL_LABEL}
+    controls = ControlRegistry()
+
+    def tool_context(error: str | None = None) -> dict:
+        return {"rules": settings.rules, "error": error, "approved_tool": APPROVED_TOOL_LABEL, "card": TOOL_CARD}
+
+    def data_context(error: str | None = None, preview: dict | None = None, **extra) -> dict:
+        """Screen 2 shows the demo study's preview unless an upload has just been previewed."""
+        shown = preview if preview is not None else preview_study(settings.demo_study_path)
+        return {"error": error, "preview": shown, "tool": "admet-ai", "approved_tool": APPROVED_TOOL_LABEL,
+                "demo_name": settings.demo_study_path.name, "upload_name": None, "token": None, "synthetic_upload": False, **extra}
 
     @app.post("/access")
     def enter_code(request: Request, code: str = Form("")):
@@ -125,12 +141,46 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         return reply
 
     @app.get("/", response_class=HTMLResponse)
-    def intake(request: Request, busy: str = ""):
+    def tool_screen(request: Request, busy: str = ""):
+        """Screen 1: choose the tool."""
         if not authorized(request):
             return access_page(request)
         # Only say "in progress" while a run really holds the lock (a stale bookmark must not claim it).
         error = "A sealed run is in progress. Wait for it to finish, then run again." if busy and run_lock.locked() else None
-        return templates.TemplateResponse(request, "intake.html", intake_context(request, error))
+        return templates.TemplateResponse(request, "tool.html", tool_context(error))
+
+    @app.post("/data", response_class=HTMLResponse)
+    @app.get("/data", response_class=HTMLResponse)
+    async def data_screen(request: Request, tool: str = Form("admet-ai")):
+        """Screen 2: choose the data. The demo study is previewed at once; an upload is previewed on /data/preview."""
+        if (blocked := gate(request)) is not None:
+            return blocked
+        try:
+            check_approved(tool)
+        except ToolInstallError as exc:
+            return templates.TemplateResponse(request, "tool.html", tool_context(str(exc)), status_code=400)
+        return templates.TemplateResponse(request, "data.html", data_context())
+
+    @app.post("/data/preview", response_class=HTMLResponse)
+    async def data_preview(request: Request, tool: str = Form("admet-ai"), synthetic: str = Form(""), study: UploadFile | None = File(None)):
+        if (blocked := gate(request)) is not None:
+            return blocked
+        try:
+            check_approved(tool)
+        except ToolInstallError as exc:
+            return templates.TemplateResponse(request, "tool.html", tool_context(str(exc)), status_code=400)
+        if study is None or not study.filename:
+            return templates.TemplateResponse(request, "data.html", data_context("Choose a CSV file, or go back and use the synthetic demo study."), status_code=400)
+        data = await study.read(MAX_BYTES + 1)  # never hold more than the limit plus one byte
+        staged = _stage_upload(settings.runs_dir, data)
+        try:
+            preview = preview_study(staged)
+        except IntakeError as exc:
+            _discard(staged)
+            return templates.TemplateResponse(request, "data.html", data_context(str(exc)), status_code=400)
+        token = _keep_staged(staged, Path(study.filename).name, synthetic == "yes")
+        return templates.TemplateResponse(request, "data.html", data_context(
+            preview=preview, upload_name=Path(study.filename).name, token=token, synthetic_upload=synthetic == "yes"))
 
     @app.post("/runs")
     async def start_run(
@@ -138,6 +188,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         tool: str = Form("admet-ai"),
         source: str = Form("demo"),
         synthetic: str = Form(""),
+        token: str = Form(""),
         study: UploadFile | None = File(None),
     ):
         if (blocked := gate(request)) is not None:
@@ -145,12 +196,17 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         try:
             check_approved(tool)  # before any run directory or room exists
         except ToolInstallError as exc:
-            return _intake_error(templates, intake_context, request, str(exc))
+            return templates.TemplateResponse(request, "tool.html", tool_context(str(exc)), status_code=400)
         staged: Path | None = None
-        if source == "upload":
+        if source == "upload" and token:
+            staged, display, is_synthetic = _take_staged(settings.runs_dir, token)
+            if staged is None:
+                return templates.TemplateResponse(request, "data.html", data_context("That file is no longer held. Choose it again."), status_code=400)
+            source_path = staged
+        elif source == "upload":
             if study is None or not study.filename:
-                return _intake_error(templates, intake_context, request, "Choose a study file or use the synthetic demo study.")
-            data = await study.read(MAX_BYTES + 1)  # never hold more than the limit plus one byte
+                return templates.TemplateResponse(request, "data.html", data_context("Choose a study file or use the synthetic demo study."), status_code=400)
+            data = await study.read(MAX_BYTES + 1)
             staged = _stage_upload(settings.runs_dir, data)
             source_path, display, is_synthetic = staged, Path(study.filename).name, synthetic == "yes"
         else:
@@ -159,13 +215,15 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             validate_study(source_path)
         except IntakeError as exc:
             _discard(staged)
-            return _intake_error(templates, intake_context, request, str(exc))
+            return templates.TemplateResponse(request, "data.html", data_context(str(exc)), status_code=400)
         if not run_lock.acquire(blocking=False):
             _discard(staged)
             # Redirect instead of rendering at /runs, so a browser refresh cannot submit the form again.
             return RedirectResponse("/?busy=1", status_code=303)
         try:
-            run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic)
+            control = RunControl()
+            run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic, control)
+            controls.add(run_request.run_id, control)
         except Exception:
             run_lock.release()
             raise
@@ -176,6 +234,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             try:
                 run_to_completion(settings, run_request, record)
             finally:
+                controls.drop(run_request.run_id)
                 run_lock.release()
 
         threading.Thread(target=work, name=f"run-{run_request.run_id}", daemon=False).start()
@@ -189,19 +248,64 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             raise HTTPException(404, "No such run")
         return record
 
+    reference = load_reference()
+
+    def stage_context(record: dict, step: int | None) -> dict:
+        record = {"study": None, "awaiting": None, "decisions": {}, **record}  # records from before the guided flow lack these
+        plan = next((s["result_excerpt"] for s in record["steps"] if s["kind"] == "model"), "")
+        return {
+            "r": record, "rules": settings.rules, "p": picture(record), "screen": screen_for(record, step),
+            "plan": plan, "results": results_with_reference(record, reference), "reference": reference,
+            "clean": not unclean_reasons(record) if record["status"] == "completed" else False,
+            "attached": (record.get("decisions") or {}).get("attached"),
+        }
+
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
-    def run_page(request: Request, run_id: str):
+    def run_page(request: Request, run_id: str, step: int | None = None):
         if (blocked := gate(request)) is not None:
             return blocked
-        record = record_or_404(run_id)
-        return templates.TemplateResponse(request, "run.html", {"r": record, "rules": settings.rules})
+        return templates.TemplateResponse(request, "run.html", stage_context(record_or_404(run_id), step))
 
     @app.get("/runs/{run_id}/fragment", response_class=HTMLResponse)
-    def run_fragment(request: Request, run_id: str):
+    def run_fragment(request: Request, run_id: str, step: int | None = None):
+        if (blocked := gate(request)) is not None:
+            return blocked
+        return templates.TemplateResponse(request, "_stage.html", stage_context(record_or_404(run_id), step))
+
+    def back_to(run_id: str) -> RedirectResponse:
+        return RedirectResponse(f"/runs/{run_id}", status_code=303)
+
+    @app.post("/runs/{run_id}/gate")
+    def answer_gate(request: Request, run_id: str, answer: str = Form("")):
+        if (blocked := gate(request)) is not None:
+            return blocked
+        record_or_404(run_id)
+        control = controls.get(run_id)
+        if control is not None and answer in ("yes", "no"):
+            control.answer_gate(answer == "yes")
+        return back_to(run_id)
+
+    @app.post("/runs/{run_id}/close")
+    def close_room(request: Request, run_id: str):
         if (blocked := gate(request)) is not None:
             return blocked
         record = record_or_404(run_id)
-        return templates.TemplateResponse(request, "_timeline.html", {"r": record, "rules": settings.rules})
+        control = controls.get(run_id)
+        if control is not None and record.get("awaiting") == "close":
+            control.press_close()
+        return back_to(run_id)
+
+    @app.post("/runs/{run_id}/attach")
+    def attach_receipt(request: Request, run_id: str, name: str = Form("")):
+        """Step 7: the person attaches the receipt to the study; her name and the time are recorded once."""
+        if (blocked := gate(request)) is not None:
+            return blocked
+        record = record_or_404(run_id)
+        clean_name = " ".join(name.split())[:NAME_MAX]
+        if record["status"] == "completed" and clean_name and not (record.get("decisions") or {}).get("attached"):
+            # The orchestrator thread has finished (status completed), so this is the only writer left for this run.
+            _record_attachment(settings.runs_dir, run_id, clean_name)
+        return back_to(run_id)
 
     def make_receipt(run_id: str) -> dict:
         return build_receipt(record_or_404(run_id), load_reference())
@@ -212,7 +316,15 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             return blocked
         receipt = make_receipt(run_id)
         problems = validate_receipt(receipt)
-        return templates.TemplateResponse(request, "receipt.html", {"x": receipt, "schema_problems": problems})
+        return templates.TemplateResponse(request, "receipt.html", {"x": receipt, "schema_problems": problems, "audit": False})
+
+    @app.get("/runs/{run_id}/audit", response_class=HTMLResponse)
+    def audit_page(request: Request, run_id: str):
+        """F19: the full record, as it stands now, reachable from every screen. The same content as the receipt, unchanged."""
+        if (blocked := gate(request)) is not None:
+            return blocked
+        receipt = make_receipt(run_id)
+        return templates.TemplateResponse(request, "receipt.html", {"x": receipt, "schema_problems": validate_receipt(receipt), "audit": True})
 
     @app.get("/runs/{run_id}/receipt.json")
     def receipt_json(request: Request, run_id: str):
@@ -253,5 +365,37 @@ def _discard(path: Path | None) -> None:
         path.unlink(missing_ok=True)
 
 
-def _intake_error(templates, intake_context, request: Request, message: str, status: int = 400):
-    return templates.TemplateResponse(request, "intake.html", intake_context(request, message), status_code=status)
+def _keep_staged(staged: Path, display: str, synthetic: bool) -> str:
+    """Hold a previewed upload under a random token until the person confirms (or an hour passes)."""
+    folder = staged.parent
+    token = secrets.token_hex(8)
+    staged.rename(folder / f"{token}.csv")
+    (folder / f"{token}.json").write_text(json.dumps({"display": display, "synthetic": synthetic}))
+    cutoff = time.time() - STAGED_MAX_AGE_S
+    for old in folder.glob("*"):
+        if old.is_file() and old.stat().st_mtime < cutoff:
+            old.unlink(missing_ok=True)
+    return token
+
+
+def _take_staged(runs_dir: Path, token: str) -> tuple[Path | None, str, bool]:
+    """The held upload for a token, or (None, '', False). The file is removed by the caller after the run copies it."""
+    if not TOKEN_RE.match(token):
+        return None, "", False
+    folder = runs_dir / "_staging"
+    csv_path, meta_path = folder / f"{token}.csv", folder / f"{token}.json"
+    if not csv_path.is_file() or not meta_path.is_file():
+        return None, "", False
+    meta = json.loads(meta_path.read_text())
+    meta_path.unlink(missing_ok=True)
+    return csv_path, meta["display"], bool(meta["synthetic"])
+
+
+def _record_attachment(runs_dir: Path, run_id: str, name: str) -> None:
+    """Write the attachment into the stored record of a finished run, atomically."""
+    path = runs_dir / run_id / "run.json"
+    data = json.loads(path.read_text())
+    data.setdefault("decisions", {})["attached"] = {"name": name, "at": now_iso()}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    os.replace(tmp, path)

@@ -14,6 +14,8 @@
   "caps": {
     "tool_run_s": 600,
     "whole_run_s": 900,
-    "max_agent_steps": 25
+    "max_agent_steps": 25,
+    "gate_wait_s": 300,
+    "close_wait_s": 300
   }
 }

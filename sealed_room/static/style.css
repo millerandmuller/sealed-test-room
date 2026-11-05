@@ -73,3 +73,54 @@ a.btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--ink); 
   pre.code { font-size: 8.5pt; }
   @page { size: A4; margin: 14mm; }
 }
+
+/* ---- guided flow (F18) ---- */
+ol.steps7 { list-style: none; display: flex; gap: 4px; padding: 0; margin: 4px 0 18px; flex-wrap: wrap; }
+ol.steps7 li { flex: 1 1 0; min-width: 78px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  border-top: 3px solid var(--rule); padding-top: 6px; transition: color .4s, border-color .4s; }
+ol.steps7 li span { font-family: var(--mono); margin-right: 4px; }
+ol.steps7 li.done { color: var(--green); border-color: var(--green); }
+ol.steps7 li.now { color: var(--ink); border-color: var(--ink); font-weight: 700; }
+.headrow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+a.audit { font-size: 13px; color: var(--accent); border: 1px solid var(--rule); background: #fff; padding: 5px 10px; border-radius: 3px; text-decoration: none; white-space: nowrap; }
+a.audit:hover { border-color: var(--accent); }
+dl { margin: 0; } dt { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 10px; }
+dd { margin: 2px 0 0; }
+.toolcard { margin-bottom: 14px; }
+table.preview td, table.preview th { font-size: 13px; }
+.gate { border: 2px solid var(--ink); background: #fff; padding: 16px 18px; border-radius: 4px; margin: 16px 0; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0 0; }
+.actions button.primary { margin-top: 0; }
+button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--ink); border-radius: 3px; padding: 11px 20px; font: 600 16px inherit; cursor: pointer; }
+button.secondary:hover { background: #f1efe9; }
+a.primary-link { background: var(--ink); color: var(--paper); font-weight: 600; }
+.banner.calm { background: #eef1f4; color: var(--ink); border-color: var(--accent); }
+tr.ref td { background: #f7f6f1; }
+.where { margin: 10px 0; }
+
+/* the picture: color, the file icon's position, and the box disappearing; nothing else moves */
+svg.art { width: 100%; max-width: 760px; height: auto; display: block; margin: 8px 0 14px; }
+svg.art text { font-family: var(--mono); fill: var(--ink); }
+svg.art .cap { font-size: 13px; font-weight: 700; fill: var(--accent); }
+svg.art .lbl { font-size: 11px; fill: var(--muted); }
+svg.art .lbl.bad { fill: var(--red); }
+svg.art .xmark { font-size: 16px; fill: var(--red); }
+svg.art .host { fill: #fff; stroke: var(--rule); stroke-width: 2; }
+svg.art .room-wall { fill: #fff; stroke: var(--ink); stroke-width: 5; }
+svg.art .dl-wall { fill: #fff; stroke: var(--muted); stroke-width: 2; stroke-dasharray: 6 4; }
+svg.art .room-door { fill: var(--red-bg); stroke: var(--muted); stroke-width: 2; transition: fill .6s; }
+svg.art .room-door.open { fill: var(--green-bg); stroke: var(--green); }
+svg.art .endpoint { fill: var(--green-bg); stroke: var(--green); stroke-width: 2; }
+svg.art .probe { stroke-width: 3; stroke-dasharray: 8 5; }
+svg.art .probe.blocked { stroke: var(--red); }
+svg.art .probe.allowed { stroke: var(--green); }
+svg.art .file-room { animation: file-in 1s ease-out; }
+svg.art .file-result { animation: file-out 1s ease-out; }
+svg.art .vanish.fresh { animation: vanish .9s ease-in forwards; }
+svg.art .vanish.settled, svg.art .download.vanish { opacity: 0; }
+@keyframes file-in { from { transform: translate(64px, 96px); opacity: .3; } to { transform: translate(416px, 130px); opacity: 1; } }
+@keyframes file-out { from { transform: translate(416px, 130px); opacity: .3; } to { transform: translate(64px, 176px); opacity: 1; } }
+@keyframes vanish { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { svg.art * { animation: none !important; } }
+svg.art .unverified .room-wall { stroke: var(--red); }
+svg.art text.warn { fill: var(--red); font-size: 12px; font-weight: 700; }

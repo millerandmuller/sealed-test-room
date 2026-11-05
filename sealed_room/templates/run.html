@@ -1,19 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Run {{ r.run_id }} - Sealed Test Room{% endblock %}
 {% block body %}
-<div id="timeline">{% include "_timeline.html" %}</div>
+<div id="stage">{% include "_stage.html" %}</div>
 <script>
+  /* Same polling as before, but the picture is swapped only when it changed, so its animation plays once per change. */
   (function () {
-    var box = document.getElementById("timeline");
+    var box = document.getElementById("stage");
+    function openIds() {
+      return Array.prototype.filter.call(box.querySelectorAll("details[id][open]"), function () { return true; })
+        .map(function (d) { return d.id; });
+    }
+    function apply(html) {
+      var next = document.createElement("div");
+      next.innerHTML = html;
+      var open = openIds();
+      var root = box.querySelector("[data-status]"), fresh = next.querySelector("[data-status]");
+      if (!root || !fresh) { box.innerHTML = html; return; }
+      root.setAttribute("data-status", fresh.getAttribute("data-status"));
+      root.setAttribute("data-screen", fresh.getAttribute("data-screen"));
+      Array.prototype.forEach.call(fresh.querySelectorAll("[data-slot]"), function (slot) {
+        var name = slot.getAttribute("data-slot"), old = root.querySelector('[data-slot="' + name + '"]');
+        if (old && old.innerHTML !== slot.innerHTML) { old.innerHTML = slot.innerHTML; }
+        else if (!old) { root.appendChild(slot); }
+      });
+      open.forEach(function (id) { var d = document.getElementById(id); if (d) { d.open = true; } });
+    }
     function poll() {
       var root = box.querySelector("[data-status]");
       if (root && root.getAttribute("data-status") !== "running") { return; }
-      fetch("/runs/{{ r.run_id }}/fragment", { cache: "no-store" })
+      fetch("/runs/{{ r.run_id }}/fragment" + window.location.search, { cache: "no-store" })
         .then(function (res) { return res.text(); })
-        .then(function (html) { box.innerHTML = html; setTimeout(poll, 2000); })
+        .then(function (html) { apply(html); setTimeout(poll, 1500); })
         .catch(function () { setTimeout(poll, 2000); });
     }
-    setTimeout(poll, 2000);
+    setTimeout(poll, 1500);
   })();
 </script>
 {% endblock %}

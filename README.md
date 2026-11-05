@@ -37,12 +37,12 @@ v1 supports one approved tool (`admet-ai` 2.0.1); the policy (one door, wall che
 ![Architecture: web app and orchestrator on a Vultr VX1 host; a data-free download room; a sealed room with one door to Vultr Serverless Inference; a receipt](docs/architecture.svg)
 
 1. **Sealed room** (a microVM created with `--no-net` and one allow rule for the inference endpoint's IP on port 443) is opened first, empty.
-2. **Wall check**, before anything else enters: from inside the sealed room the agent tries the package index, the Git host and the inference endpoint. Two must be refused and one must succeed. If not, the run stops and no tool is fetched.
+2. **Wall check**, before anything else enters, then the gate where you choose whether your file goes in: from inside the sealed room the agent tries the package index, the Git host and the inference endpoint. Two must be refused and one must succeed. If not, the run stops and no tool is fetched.
 3. **Download room** (a Microsandbox microVM, default network, no study data inside, 1024 MB): the tool's wheels are fetched, hashed, packed into one tar file and copied out. The room is destroyed. The tar file is copied into the sealed room and installed offline.
 4. **Data in, results out**: the study file is copied in (SHA-256 recorded), the agent writes and runs a runner script, the results file is copied out (SHA-256 recorded). The host checks the results itself.
 5. **The door**: the room makes its one result-check call to the endpoint (see above).
-6. **Destroy check**: the room is removed and `msb list` is run to prove it is gone.
-7. **Receipt**: one JSON record per run (schema in `schemas/receipt.schema.json`) and one printable HTML page.
+6. **Destroy check**: when you close the room (or the wait runs out), it is removed and `msb list` is run to prove it is gone.
+7. **Receipt**: one JSON record per run (the same record shows what you decided and when) (schema in `schemas/receipt.schema.json`) and one printable HTML page.
 
 ## Vultr services used
 
@@ -56,7 +56,7 @@ The app is served at **https://45-63-20-61.sslip.io**. It asks for an access cod
 
 The site is served over HTTPS (Caddy with a Let's Encrypt certificate, on a hostname derived from the host's IP address through the sslip.io wildcard DNS service). Some networks refuse to resolve sslip.io names; for those, `http://45.63.20.61` serves the same app over plain HTTP, where the access code is not encrypted in transit.
 
-Choose the synthetic demo study and press "Run in sealed room". The wall-check rows appear after a few seconds; a full run takes a few minutes. Only one run can be in progress at a time.
+The app walks you through seven screens, and you decide at each one while the agent does the work: (1) the tool, with its name, version, source and what it produces; (2) the data, with a preview of the first rows, the columns, the row count, the SHA-256 and the synthetic badge, then a confirm; (3) the room, drawn as a box with one door, its walls tested while you watch, and then the question "Walls tested. Send your file in?" (answer no and the room is destroyed with nothing inside it); (4) the agent at work, with its plan in plain words and a picture that shows where your file is at every moment; (5) your results table first, with two reference labels; (6) you close the room yourself; (7) the room is shown gone and verified, and you attach the receipt to the study with your name and the time recorded. An "Audit trail" control on every screen from step 3 on, and on the receipt, opens the full record: policy, wall rows, rooms, commands, hashes, code and door calls. The wall-check rows appear after a few seconds; a full run takes a few minutes. Only one run can be in progress at a time; a gate or a close that nobody answers within five minutes ends the run safely (no answer at the gate counts as no).
 
 To run it yourself: Linux host with `/dev/kvm`, `msb` 0.7.13, Python 3.12, `pip install -r requirements.txt`, set `VULTR_INFERENCE_API_KEY` and `JUDGE_ACCESS_CODE`, then `uvicorn sealed_room.web:create_app --factory`. Tests: `pip install -r requirements-dev.txt && pytest`.
 

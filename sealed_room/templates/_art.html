@@ -1,0 +1,48 @@
+{# The picture. It draws only what `p` (drawing.picture, built from the run record) contains. The download room has no slot for a file. #}
+{% from "_macros.html" import doc %}
+<svg viewBox="0 0 760 {{ 350 if p.download else 290 }}" role="img" class="art"
+     aria-label="Sealed room drawing. {{ p.facts|join(' ') }}">
+  {# with you #}
+  {% if p.with_you %}
+    <rect x="8" y="40" width="150" height="210" rx="6" class="host"/>
+    <text x="83" y="62" text-anchor="middle" class="cap">With you</text>
+    {{ doc(64, 96, "file-host", "your file") }}
+    {% if p.results_out %}{{ doc(64, 176, "file-result", "results") }}{% endif %}
+  {% endif %}
+
+  {# sealed room: one box, one door #}
+  {% if p.sealed %}
+    <g class="sealed {{ 'vanish' if p.sealed == 'gone' else ('unverified' if p.sealed == 'unverified' else '') }} {{ 'fresh' if fresh_gone else 'settled' }}">
+      <rect x="300" y="30" width="270" height="230" rx="4" class="room-wall"/>
+      <rect x="564" y="124" width="12" height="52" class="room-door {{ 'open' if p.door_calls or (p.walls|selectattr('verdict','equalto','ALLOWED')|list) else '' }}"/>
+      <text x="435" y="52" text-anchor="middle" class="cap">Sealed room</text>
+      {% if p.sealed == "unverified" %}<text x="435" y="246" text-anchor="middle" class="warn">removed, NOT proven gone</text>{% endif %}
+      <text x="580" y="116" text-anchor="start" class="lbl">the one door</text>
+      {# wall tests, as recorded #}
+      {% set ns = namespace(blocked=0) %}
+      {% for w in p.walls %}
+        {% if w.verdict == "BLOCKED" %}
+          {% set yy = 78 if ns.blocked == 0 else 222 %}{% set ns.blocked = ns.blocked + 1 %}
+          <line x1="330" y1="{{ yy }}" x2="566" y2="{{ yy }}" class="probe blocked"/>
+          <text x="566" y="{{ yy + 5 }}" class="xmark" text-anchor="middle">&#10005;</text>
+          <text x="590" y="{{ yy + 4 }}" class="lbl bad">{{ w.host }} refused</text>
+        {% else %}
+          <line x1="330" y1="150" x2="640" y2="150" class="probe allowed"/>
+        {% endif %}
+      {% endfor %}
+      {% if p.copy_in_room %}{{ doc(416, 130, "file-room", "copy of your file") }}{% endif %}
+    <rect x="640" y="124" width="112" height="52" rx="4" class="endpoint"/>
+    <text x="696" y="146" text-anchor="middle" class="lbl">Vultr inference</text>
+    <text x="696" y="162" text-anchor="middle" class="lbl small">answers</text>
+    </g>
+  {% endif %}
+
+  {# download room: open network, no study data, no file slot #}
+  {% if p.download %}
+    <g class="download {{ 'vanish' if p.download == 'gone' else '' }}">
+      <rect x="300" y="286" width="270" height="48" rx="4" class="dl-wall"/>
+      <text x="435" y="307" text-anchor="middle" class="cap">Download room: open network</text>
+      <text x="435" y="324" text-anchor="middle" class="lbl">no study data inside</text>
+    </g>
+  {% endif %}
+</svg>

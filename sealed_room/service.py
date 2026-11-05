@@ -6,9 +6,12 @@ import shutil
 from pathlib import Path
 
 from .config import Settings
+from .hashing import sha256_file
 from .inference import Inference
+from .intake import validate_study
 from .msb import Msb
 from .orchestrator import RunRequest, execute_run
+from .runctl import RunControl
 from .runrecord import RunRecord
 
 
@@ -21,13 +24,18 @@ def new_run_id(runs_dir: Path) -> str:
     raise RuntimeError("run id space is exhausted; archive old runs")
 
 
-def prepare_run(settings: Settings, tool: str, study_source: Path, display_name: str, synthetic: bool) -> tuple[RunRequest, RunRecord]:
+def prepare_run(settings: Settings, tool: str, study_source: Path, display_name: str, synthetic: bool,
+                control: RunControl | None = None) -> tuple[RunRequest, RunRecord]:
     """Create the run directory and a private copy of the study file, so later edits to the source cannot change the run."""
     run_id = new_run_id(settings.runs_dir)
     record = RunRecord(run_id, settings.runs_dir)
     study_copy = record.dir / "study.csv"
     shutil.copyfile(study_source, study_copy)
-    request = RunRequest(run_id=run_id, tool=tool, study_path=study_copy, display_name=display_name, synthetic=synthetic)
+    # What the person handed over, recorded before any room exists: the drawing shows the file "with you" only on this line.
+    record.update(study={"name": display_name, "sha256": sha256_file(study_copy), "rows": validate_study(study_copy),
+                         "synthetic": synthetic})
+    request = RunRequest(run_id=run_id, tool=tool, study_path=study_copy, display_name=display_name, synthetic=synthetic,
+                         control=control)
     return request, record
 
 

@@ -163,7 +163,7 @@ def test_live_page_shows_study_hash_at_the_file_in_beat(client):
     rec["status"] = "running"
     save(runs, rec)
     page = c.get("/runs/ab12/fragment").text
-    assert "Study file in: s.csv" in page and "a" * 64 in page
+    assert "entered the sealed room" in page and "s.csv" in page and "a" * 12 in page
 
 
 def test_old_finished_run_is_labelled_as_recorded(client):

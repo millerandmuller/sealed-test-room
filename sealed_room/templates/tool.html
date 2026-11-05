@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block body %}
+{% include "_steps.html" with context %}
+<h1>Choose the tool</h1>
+<p class="lede">A new tool, your study data, one door. You decide at every step; the agent does the work.</p>
+
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+
+<div class="box toolcard">
+  <p class="small" style="margin:0 0 4px">The one tool on this demo's approved list</p>
+  <h2 style="margin:0 0 10px;text-transform:none;letter-spacing:0;font-size:22px;color:var(--ink)"><span class="mono">{{ card.name }}</span> <span class="mono small">version {{ card.version }}</span></h2>
+  <dl>
+    <dt>Where it comes from</dt><dd>{{ card.source }}</dd>
+    <dt>What it produces</dt><dd>{{ card.produces }}</dd>
+  </dl>
+  <p class="small" style="margin:10px 0 0">Approved list: <span class="mono">{{ approved_tool }}</span>. Other tools are not on the approved list yet.</p>
+</div>
+
+<div class="box">
+  <h2>Rules set by IT</h2>
+  <p style="margin:0">Allowed from inside the room: <span class="mono">{{ rules.allowed_host }}:{{ rules.allowed_port }}</span> &middot; Everything else: denied</p>
+  <p class="small" style="margin:6px 0 0">Room size: {{ rules.room.cpus }} CPUs, {{ rules.room.memory_mb }} MB &middot; run cap {{ (rules.caps.whole_run_s / 60)|int }} minutes</p>
+</div>
+
+<form method="post" action="/data">
+  <input type="hidden" name="tool" value="admet-ai">
+  <button class="primary" type="submit">Use this tool</button>
+</form>
+{% endblock %}

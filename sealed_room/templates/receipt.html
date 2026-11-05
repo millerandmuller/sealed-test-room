@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Receipt {{ x.run_id }} - Sealed Test Room{% endblock %}
 {% block body %}
-<h1>Receipt for run {{ x.run_id }}</h1>
+{% if audit %}<p class="noprint small"><a href="/runs/{{ x.run_id }}">Back to the run</a> &middot; This is the audit trail: the full record of the run as it stands now.</p>{% endif %}
+<h1>{{ "Audit trail" if audit else "Receipt" }} for run {{ x.run_id }}</h1>
 <p class="lede">Tool <span class="mono">{{ x.tool.spec }}</span>, version <span class="mono">{{ x.tool.version_installed or "not installed" }}</span> &middot; started {{ x.started|hhmmss }} UTC{% if x.finished %}, finished {{ x.finished|hhmmss }} UTC{% endif %}</p>
 
-{% if x.clean %}
+{% if x.status == "declined" %}
+  <div class="banner calm"><strong>STOPPED BY YOU.</strong> You chose not to send the file in. Nothing entered the room. All rooms proven absent: <strong>{{ "yes" if x.destroy.all_rooms_verified_absent else "NO" }}</strong>.</div>
+{% elif x.clean %}
   <div class="banner ok"><strong>CLEAN.</strong> The run completed, the wall check passed, and every room was proven absent.</div>
 {% else %}
   <div class="banner bad"><strong>NOT CLEAN.</strong>
@@ -19,10 +22,20 @@
 {% endif %}
 
 <p class="noprint">
+  <a class="btn" href="/runs/{{ x.run_id }}/audit" title="The full record of this run, as it stands now">Audit trail</a>
   <a class="btn" href="/runs/{{ x.run_id }}/receipt.json" download="receipt-{{ x.run_id }}.json">Download JSON</a>
   <a class="btn" href="#" onclick="window.print(); return false;">Print</a>
   <a class="btn" href="#results">Jump to results</a>
 </p>
+
+{% if x.decisions %}
+<h2>What you decided</h2>
+<table>
+  {% if x.decisions.send_file %}<tr><td>Send the file in?</td><td class="mono">{{ x.decisions.send_file.answer }}</td><td class="mono small">{{ x.decisions.send_file.at|stamp }} UTC</td></tr>{% endif %}
+  {% if x.decisions.close_room %}<tr><td>Close the room</td><td class="mono">{{ x.decisions.close_room.by }}</td><td class="mono small">{{ x.decisions.close_room.at|stamp }} UTC</td></tr>{% endif %}
+  {% if x.decisions.attached %}<tr><td>Receipt attached to the study</td><td class="mono">{{ x.decisions.attached.name }}</td><td class="mono small">{{ x.decisions.attached.at|stamp }} UTC</td></tr>{% endif %}
+</table>
+{% endif %}
 
 <h2>Network policy and wall check</h2>
 <div class="box">

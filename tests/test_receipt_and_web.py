@@ -96,8 +96,9 @@ def save(runs_dir, rec):
 def test_intake_page_shows_rules_and_button(client):
     c, _ = client
     page = c.get("/").text
-    assert "Rules set by IT" in page and "api.vultrinference.com:443" in page and "Run in sealed room" in page
-    assert "Synthetic study data" in page
+    assert "Rules set by IT" in page and "api.vultrinference.com:443" in page and "Use this tool" in page
+    data = c.get("/data").text
+    assert "Synthetic study data" in data and "Confirm this data and open the room" in data
 
 
 def test_upload_without_file_is_rejected_before_any_room(client):
@@ -143,6 +144,7 @@ def test_live_fragment_shows_red_and_green_rows_and_polls_while_running(client):
     c, runs = client
     rec = good_record()
     rec["status"] = "running"
+    rec["awaiting"] = "gate"  # walls tested, waiting for the person: this is the screen that shows the wall rows
     save(runs, rec)
     frag = c.get("/runs/ab12/fragment").text
     assert 'data-status="running"' in frag and "row-BLOCKED" in frag and "row-ALLOWED" in frag

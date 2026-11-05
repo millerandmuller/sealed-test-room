@@ -59,7 +59,7 @@ def test_intake_shows_the_approved_tool_as_text_not_a_free_field(client):
     c, _ = client
     page = c.get("/").text
     assert "admet-ai 2.0.1" in page and "Other tools are not on the approved list yet." in page
-    assert 'type="text"' not in page.split("<form")[1].split("Study file")[0]
+    assert 'type="text"' not in page
     assert 'type="hidden" name="tool"' in page
 
 

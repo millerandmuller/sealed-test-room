@@ -20,7 +20,8 @@ from .inference import Inference
 from .intake import normalized_header, validate_study
 from .msb import Msb
 from .rooms import Room, RoomManager
-from .runrecord import RunRecord
+from .runctl import RunControl
+from .runrecord import RunRecord, now_iso
 from .toolinstall import ToolInstallError, fetch_wheels, install_offline, resolve_tool
 from .wallcheck import WallCheckFailed, evaluate, pins_for, resolve_ipv4, run_wall_check
 
@@ -32,6 +33,11 @@ class RunRequest:
     study_path: Path
     display_name: str
     synthetic: bool
+    control: RunControl | None = None  # None: automatic run, nobody is waited for
+
+
+class RunDeclined(RuntimeError):
+    """The person answered no (or did not answer) at the gate. Not an error: nothing entered the room."""
 
 
 class RunAborted(RuntimeError):
@@ -57,6 +63,9 @@ def execute_run(
         record.update(wall_check_verdict="FAILED")
         record.add_step("phase", "wall check", "", f"Wall check failed: room not sealed. {exc}")
         status, error = "failed", f"Wall check failed: room not sealed. {exc}"
+    except RunDeclined as exc:
+        record.add_step("phase", "gate", "", str(exc))
+        status, error = "declined", None
     except RunAborted as exc:
         status, error = "aborted", str(exc)
     except Exception as exc:  # last resort: no path may leave a run at "running"
@@ -103,6 +112,7 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     # The wall check needs only the bare room, so it runs first: the cage is tested before the tool is even fetched.
     _wall_check(msb, sealed, record, settings)
     _check_clock(deadline)
+    deadline += _gate(request.control, record, settings)  # a person's thinking time is not the run's time
 
     _phase(record, "download room", "Opening a download room (no study data inside) to fetch the tool.")
     fetched = _fetch_with_retry(msb, rooms, record, request.run_id, tool, run_dir, deadline)
@@ -130,8 +140,45 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     _verify_results(request.study_path, run_dir / "outputs" / "results.csv", record)
     _door_check(settings, msb, sealed, record, rows, deadline)
 
+    closed_by = _wait_for_close(request.control, record, settings)
     rooms.close(sealed)
-    _phase(record, "destroy", "Sealed room destroyed and verified absent.")
+    _phase(record, "destroy", f"Sealed room destroyed and verified absent ({closed_by}).")
+
+
+def _gate(control: RunControl | None, record: RunRecord, settings: Settings) -> float:
+    """The walls are tested; the person decides whether the file goes in. Returns the seconds spent waiting."""
+    if control is None:
+        record.set_decision("send_file", {"answer": "automatic", "at": now_iso()})
+        return 0.0
+    wait_s = int(settings.caps.get("gate_wait_s", 300))
+    asked = now_iso()
+    record.update(awaiting="gate")
+    _phase(record, "gate", "Walls tested. Waiting for you to decide whether your file goes in.")
+    started = time.monotonic()
+    answer = control.wait_gate(wait_s)
+    record.update(awaiting=None)
+    record.set_decision("send_file", {"answer": answer, "asked": asked, "at": now_iso()})
+    if answer == "yes":
+        _phase(record, "gate", "You chose to send the file in.")
+        return time.monotonic() - started
+    why = "You chose not to send the file in." if answer == "no" else f"No answer within {wait_s // 60} minutes, treated as no."
+    raise RunDeclined(f"{why} The room is destroyed; nothing entered it.")
+
+
+def _wait_for_close(control: RunControl | None, record: RunRecord, settings: Settings) -> str:
+    """The results are in; the room stays until the person closes it (or the wait runs out). Returns who closed it."""
+    if control is None:
+        record.set_decision("close_room", {"by": "automatic", "at": now_iso()})
+        return "closed automatically"
+    wait_s = int(settings.caps.get("close_wait_s", 300))
+    record.update(awaiting="close")
+    _phase(record, "close", "Results are in. The room stays open until you close it.")
+    pressed = control.wait_close(wait_s)
+    record.update(awaiting=None)
+    record.set_decision("close_room", {"by": "person" if pressed else "timeout", "at": now_iso()})
+    if not pressed:
+        record.add_note(f"Nobody closed the room within {wait_s // 60} minutes, so it was closed automatically.")
+    return "closed by you" if pressed else "closed automatically after no answer"
 
 
 def _door_check(settings: Settings, msb: Msb, sealed: Room, record: RunRecord, rows: int, deadline: float) -> None:

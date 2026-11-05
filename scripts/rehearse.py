@@ -55,22 +55,45 @@ def door_problems(receipt: dict, client: httpx.Client, run_dir: Path, run_id: st
 def one_run(client: httpx.Client, runs_dir: Path, msb_bin: str, cap_s: int) -> list[str]:
     problems: list[str] = []
     started = time.monotonic()
+    data_page = client.get("/data").text
+    if "Confirm this data and open the room" not in data_page:
+        problems.append("screen 2 lacks the confirm button")
     res = client.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
     if res.status_code != 303:
         return [f"start failed: HTTP {res.status_code}"]
     run_id = res.headers["location"].rsplit("/", 1)[1]
     first_rows = None
+    pressed: list[str] = []
     while time.monotonic() - started < cap_s + 60:
         frag = client.get(f"/runs/{run_id}/fragment").text
         if first_rows is None and "row-BLOCKED" in frag and "row-ALLOWED" in frag:
             first_rows = int(time.monotonic() - started)
+        # The person's two decisions, pressed the way the page offers them.
+        if "Walls tested. Send your file in?" in frag and "gate" not in pressed:
+            client.post(f"/runs/{run_id}/gate", data={"answer": "yes"})
+            pressed.append("gate")
+        if "Next: close the room" in frag and "step6" not in pressed:
+            pressed.append("step6")
+            if "Close the room" not in client.get(f"/runs/{run_id}?step=6").text:
+                problems.append("screen 6 has no Close the room button")
+            client.post(f"/runs/{run_id}/close")
+            pressed.append("close")
         if 'data-status="running"' not in frag:
             break
         time.sleep(1)
     else:
         return [f"run {run_id} still running after the cap"]
     elapsed = int(time.monotonic() - started)
+    final = client.get(f"/runs/{run_id}").text
+    for needle in ("Room gone, verified", "Attach the receipt to the study", f"/runs/{run_id}/audit"):
+        if needle not in final:
+            problems.append(f"final screen lacks: {needle}")
+    client.post(f"/runs/{run_id}/attach", data={"name": "Rehearsal Reader"})
+    if "attached to the study by" not in client.get(f"/runs/{run_id}").text:
+        problems.append("the attachment was not recorded")
     receipt = client.get(f"/runs/{run_id}/receipt.json").json()
+    if pressed != ["gate", "step6", "close"]:
+        problems.append(f"decisions pressed: {pressed}")
     print(f"  run {run_id}: {receipt['status']} in {elapsed}s, wall-check rows visible at {first_rows}s, clean={receipt['clean']}")
     if not receipt["clean"]:
         problems.append(f"receipt not clean: {receipt['unclean_reasons']}")

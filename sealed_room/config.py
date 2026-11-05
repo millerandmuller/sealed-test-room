@@ -33,6 +33,16 @@ TOOL_PROFILES: dict[str, dict] = {
 APPROVED_TOOL_LABEL = "admet-ai 2.0.1"
 APPROVED_TOOL_NAMES = frozenset({"admet-ai", "admet-ai==2.0.1"})
 
+# What screen 1 tells the person about the tool before she chooses it (F18). Plain facts, no claim of accuracy.
+TOOL_CARD = {
+    "name": "admet-ai",
+    "version": "2.0.1",
+    "source": "The Python Package Index (pypi.org). Fetched fresh for each run in a separate room that holds no study data, "
+              "and checked by SHA-256 before it is installed.",
+    "produces": "A predicted drug-induced liver injury (DILI) score for each compound, plus about 100 other predicted properties. "
+                "These are predictions, not measurements.",
+}
+
 # What actually happens to the inference key (F15). One sentence, used by the receipt JSON and the receipt page.
 KEY_HANDLING = (
     "The agent loop runs on the host. The inference key is never in the room while the tool runs. For the single "

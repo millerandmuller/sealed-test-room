@@ -12,7 +12,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-STATUSES = ("running", "completed", "failed", "aborted")
+# "declined": the person chose not to send the file in; nothing entered the room.
+STATUSES = ("running", "completed", "failed", "aborted", "declined")
 
 
 def now_iso() -> str:
@@ -49,6 +50,9 @@ class RunRecord:
             "outputs": [],
             "results_preview": None,
             "door": None,
+            "study": None,       # what was received from the person, before any room: name, hash, rows, columns
+            "awaiting": None,    # "gate" (send the file in?) or "close" (close the room?) while a person is being waited for
+            "decisions": {},     # send_file / close_room / attached: who decided what, and when
             "notes": [],
             "honesty": [],
         }
@@ -88,6 +92,11 @@ class RunRecord:
                 {"t": now_iso(), "kind": kind, "name": name, "args": clip(args, 400),
                  "result_excerpt": clip(result_excerpt)}
             )
+            self._save_locked()
+
+    def set_decision(self, name: str, value: dict) -> None:
+        with self._lock:
+            self._data["decisions"][name] = value
             self._save_locked()
 
     def add_note(self, text: str) -> None:

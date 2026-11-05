@@ -46,3 +46,15 @@ def validate_study(path: Path) -> int:
         if len(row) != len(header) or not row[smiles_at].strip():
             raise IntakeError(f"Line {number} is missing a value or has the wrong number of columns.")
     return len(data)
+
+
+PREVIEW_ROWS = 5
+
+
+def preview_study(path: Path) -> dict:
+    """What the person sees before confirming: columns, the first rows, the row count and the file's SHA-256."""
+    from .hashing import sha256_file
+
+    count = validate_study(path)  # raises IntakeError for anything unusable
+    rows = [row for row in csv.reader(path.read_text(encoding="utf-8-sig").splitlines()) if row]
+    return {"columns": rows[0], "first_rows": rows[1:1 + PREVIEW_ROWS], "row_count": count, "sha256": sha256_file(path)}

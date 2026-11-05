@@ -1,0 +1,129 @@
+<div data-status="{{ r.status }}" data-screen="{{ screen }}">
+  <div data-slot="head">
+    {% include "_steps.html" with context %}
+    <div class="headrow">
+      <h1>{% if screen == 3 %}Open the room{% elif screen == 4 %}The agent works{% elif screen == 5 %}Results{% elif screen == 6 %}Close the room{% else %}{{ "Room gone" if r.status == "completed" else "Run " ~ r.run_id }}{% endif %}</h1>
+      <a class="audit noprint" href="/runs/{{ r.run_id }}/audit" title="The full record of this run: policy, wall rows, rooms, commands, hashes, code, door calls">Audit trail</a>
+    </div>
+    <p class="lede">Run {{ r.run_id }} &middot; tool <span class="mono">{{ r.tool.spec or "admet-ai==2.0.1" }}</span>
+      {% if r.study %}&middot; <span class="mono">{{ r.study.name }}</span>{% if r.study.synthetic %} <span class="badge synthetic">Synthetic study data</span>{% endif %}{% endif %}</p>
+  </div>
+
+  {% if r.status != "running" and (r.finished|minutes_since) > 3 %}
+    <div class="banner calm">Recorded run. This page shows the stored record of a real run that started {{ r.started|stamp }} UTC; it is not a live run.</div>
+  {% endif %}
+
+  <div data-slot="art">{% with fresh_gone = (r.status == "completed" and (r.finished|seconds_since) < 8) or (r.status == "declined" and (r.finished|seconds_since) < 8) %}{% include "_art.html" with context %}{% endwith %}</div>
+
+  <div data-slot="main">
+  {% if r.error %}<div class="banner bad">{{ r.error|plain_failure }}
+    <details class="noprint" style="margin-top:6px"><summary class="small">Technical detail</summary><pre class="code" style="white-space:pre-wrap">{{ r.error }}</pre></details></div>{% endif %}
+
+  {# ---------------- screen 3: open the room ---------------- #}
+  {% if screen == 3 %}
+    {% if r.status == "declined" %}
+      <div class="banner calm"><strong>You stopped here.</strong> Your file did not go in. The room was destroyed{% if p.sealed == "gone" %} and verified absent{% endif %}; nothing entered it.</div>
+    {% elif r.status in ("failed", "aborted") %}
+      <p class="small">The run stopped before any of your data went in. Nothing from your file reached a room unless the audit trail says so.</p>
+    {% endif %}
+    <h2>Walls tested</h2>
+    {% if r.wall_check %}
+      <table>
+        {% for w in r.wall_check %}
+        <tr class="row-{{ w.verdict }}">
+          <td class="mono">{{ w.host }}</td>
+          <td class="verdict {{ w.verdict }}">{{ w.verdict }}</td>
+          <td class="small">{% if w.verdict == "BLOCKED" %}refused at the room gateway, {{ w.ms }} ms{% else %}answered, {{ w.ms }} ms{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    {% elif r.status == "running" %}<p class="spinner">Opening the room and testing its walls.</p>
+    {% else %}<p class="small">The wall check did not run.</p>{% endif %}
+
+    {% if r.awaiting == "gate" %}
+      <div class="gate">
+        <h2 style="margin-top:0">Walls tested. Send your file in?</h2>
+        <p style="margin:0 0 6px">The room can reach one host and nothing else, and it is empty. If you say yes, {% if r.study %}<span class="mono">{{ r.study.name }}</span> ({{ r.study.rows }} compounds, sha256 <span class="mono">{{ r.study.sha256[:12] }}...</span>){% else %}your file{% endif %} goes in as a copy. If you say no, the room is destroyed and nothing enters it.</p>
+        <form method="post" action="/runs/{{ r.run_id }}/gate" class="actions">
+          <button class="primary" name="answer" value="yes" type="submit">Yes, send my file in</button>
+          <button class="secondary" name="answer" value="no" type="submit">No, destroy the room</button>
+        </form>
+        <p class="small" style="margin:8px 0 0">No answer within {{ (rules.caps.gate_wait_s|default(300) / 60)|int }} minutes counts as no.</p>
+      </div>
+    {% endif %}
+
+  {# ---------------- screen 4: the agent works ---------------- #}
+  {% elif screen == 4 %}
+    <div class="box">
+      <h2 style="margin-top:0">The plan, in plain words</h2>
+      {% if plan %}<p style="margin:0">{{ plan }}</p>
+      {% else %}<p class="spinner" style="margin:0">Getting the tool ready: it is fetched in a separate room that holds no study data, then installed offline in the sealed room. Your file has not moved.</p>{% endif %}
+    </div>
+    <p class="where"><strong>Where your file is:</strong>
+      {% if p.copy_in_room %}a copy is inside the sealed room; the original stays with you.
+      {% elif p.results_out %}the results are back with you; the room has no study file after it is destroyed.
+      {% else %}with you. It has not entered any room yet.{% endif %}</p>
+    {% if r.steps %}<p class="spinner">Working: {{ r.steps[-1].t|seconds_since }} s since the last step.</p>{% endif %}
+
+  {# ---------------- screen 5: results ---------------- #}
+  {% elif screen == 5 %}
+    <p class="lede" style="margin-top:0">These are the tool's predictions for your {{ results|length }} compounds. The two reference labels are known outcomes from a public list, shown so you can see where the tool stands.</p>
+    <table>
+      <tr><th>Compound</th><th>DILI score (tool output)</th><th>Reference label</th></tr>
+      {% for row in results %}
+        <tr class="{{ 'ref' if row.reference_label }}"><td class="mono">{{ row.compound_id }}{% if row.reference_name %} ({{ row.reference_name }}){% endif %}</td>
+          <td class="mono">{{ "%.3f"|format(row.DILI|float) }}</td><td>{{ row.reference_label or "" }}</td></tr>
+      {% endfor %}
+    </table>
+    {% if reference %}<p class="small">Reference labels: {{ reference.dataset }}. {{ reference.caveat }}</p>{% endif %}
+    <p class="small">The values are the tool's output as measured in this run. They are not a claim that the tool is accurate.</p>
+    <p class="actions"><a class="btn primary-link" href="/runs/{{ r.run_id }}?step=6">Next: close the room</a></p>
+
+  {# ---------------- screen 6: close the room ---------------- #}
+  {% elif screen == 6 %}
+    <div class="gate">
+      <p style="margin:0 0 10px">The results are out and checked. Closing destroys the room and everything in it, then proves it is gone. This is the only way the room ends.</p>
+      <form method="post" action="/runs/{{ r.run_id }}/close" class="actions">
+        <button class="primary" type="submit">Close the room</button>
+        <a class="btn" href="/runs/{{ r.run_id }}">Back to the results</a>
+      </form>
+      <p class="small" style="margin:8px 0 0">If nobody presses it within {{ (rules.caps.close_wait_s|default(300) / 60)|int }} minutes, the room is closed automatically and the receipt says so.</p>
+    </div>
+
+  {# ---------------- screen 7: room gone, attach the receipt ---------------- #}
+  {% else %}
+    {% if r.status == "completed" %}
+      <div class="banner {{ 'ok' if clean else 'bad' }}"><strong>Room gone, verified.</strong>
+        {% for room in r.rooms if room.destroyed %}<div class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }} &middot; {% if room.verified_absent %}verified absent {{ room.verified_absent|hhmmss }}{% else %}<strong>STILL LISTED</strong>{% endif %}</div>{% endfor %}
+        {% if not clean %}<div class="small" style="margin-top:6px">The receipt is NOT CLEAN; open it to see why.</div>{% endif %}
+      </div>
+      <h2>Attach the receipt to the study</h2>
+      {% if attached %}
+        <div class="box"><p style="margin:0"><strong>Attached.</strong> Receipt {{ r.run_id }} was attached to the study by <strong>{{ attached.name }}</strong> at {{ attached.at|stamp }} UTC.</p></div>
+      {% else %}
+        <form method="post" action="/runs/{{ r.run_id }}/attach" class="box">
+          <label for="who" style="margin-top:0">Your name</label>
+          <input id="who" type="text" name="name" maxlength="80" required autocomplete="name">
+          <p class="small" style="margin:6px 0 0">Your name and the time are written into the record next to the receipt.</p>
+          <button class="primary" type="submit">Attach the receipt to the study</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+
+  {% if r.status != "running" %}
+    <p class="actions" style="margin-top:22px"><a class="btn" href="/runs/{{ r.run_id }}/receipt">Open the receipt</a>{% if screen == 7 or r.status in ("declined", "failed", "aborted") %}<a class="btn" href="/">Start another</a>{% endif %}</p>
+  {% endif %}
+  </div>
+
+  <div data-slot="log">
+    <details id="log" class="noprint">
+      <summary class="small">Detail log ({{ r.steps|length }} steps)</summary>
+      <ul class="steps">{% for s in r.steps %}<li><span class="t">{{ s.t|hhmmss }}</span>{{ s|step_line }}</li>{% else %}<li class="small">Starting.</li>{% endfor %}</ul>
+    </details>
+    {% if p.facts %}
+      <details id="facts" class="noprint"><summary class="small">What this picture is drawn from</summary>
+        <ul class="steps">{% for f in p.facts %}<li>{{ f }}</li>{% endfor %}</ul></details>
+    {% endif %}
+  </div>
+</div>

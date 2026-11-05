@@ -46,7 +46,7 @@ def test_right_code_sets_a_cookie_and_opens_the_intake(anon):
     res = c.post("/access", data={"code": TEST_CODE})
     assert res.status_code == 303 and ACCESS_COOKIE in res.cookies
     assert "httponly" in res.headers["set-cookie"].lower()
-    assert "Run in sealed room" in c.get("/").text
+    assert "Use this tool" in c.get("/").text
 
 
 def test_code_with_surrounding_whitespace_is_accepted(anon):
