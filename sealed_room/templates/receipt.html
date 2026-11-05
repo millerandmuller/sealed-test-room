@@ -27,7 +27,7 @@
   {% if not audit %}<a class="btn" href="/runs/{{ x.run_id }}/audit" title="The full record of this run, as it stands now">Audit trail</a>{% endif %}
   <a class="btn" href="/runs/{{ x.run_id }}/receipt.json" download="receipt-{{ x.run_id }}.json">Download JSON</a>
   <a class="btn" href="#" onclick="window.print(); return false;">Print</a>
-  <a class="btn" href="#results">Jump to results</a>
+  {% if x.results %}<a class="btn" href="#results">Jump to results</a>{% endif %}
 </p>
 
 {% if x.decisions %}

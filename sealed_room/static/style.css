@@ -99,7 +99,7 @@ tr.ref td { background: #f7f6f1; }
 .where { margin: 10px 0; }
 
 /* the picture: color, the file icon's position, and the box disappearing; nothing else moves */
-svg.art { width: 100%; max-width: 560px; height: auto; display: block; margin: 8px 0 14px; }
+svg.art { width: 100%; max-width: 560px; max-height: 34vh; height: auto; display: block; margin: 8px 0 14px; }
 svg.art text { font-family: var(--mono); fill: var(--ink); }
 svg.art .cap { font-size: 13px; font-weight: 700; fill: var(--accent); }
 svg.art .lbl { font-size: 11px; fill: var(--muted); }
@@ -134,3 +134,7 @@ div[data-screen] > [data-slot="main"] { order: 2; }
 div[data-screen] > [data-slot="log"] { order: 3; }
 div[data-screen="5"] > [data-slot="main"] { order: 1; }
 div[data-screen="5"] > [data-slot="art"] { order: 2; }
+
+/* on a short window the question comes before the table, so the buttons stay in view */
+div[data-screen="3"] > [data-slot="main"] { display: flex; flex-direction: column; }
+div[data-screen="3"] > [data-slot="main"] .gate { order: -1; }
