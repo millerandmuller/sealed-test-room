@@ -25,8 +25,11 @@
       <div class="banner calm"><strong>You stopped here.</strong> Your file did not go in. The room was destroyed{% if p.sealed == "gone" %} and verified absent{% endif %}; nothing entered it.</div>
     {% elif r.status in ("failed", "aborted") %}
       {% if r.inputs %}<p class="small">The run stopped after your file had gone in. The audit trail shows what happened to it and whether the room was proven gone.</p>
-      {% elif r.decisions.send_file and r.decisions.send_file.answer == "yes" %}<p class="small">The run stopped after you said yes. Your file may have entered the room: no input hash was recorded, so check the audit trail for the copy step and for whether the room was proven gone.</p>
-      {% else %}<p class="small">The run stopped before you were asked or before you said yes: your file did not go in.</p>{% endif %}
+      {% elif r.decisions.send_file and r.decisions.send_file.answer == "yes" and r.tool.version_installed %}<p class="small">The run stopped after you said yes and after the tool was installed. Your file may have entered the room: no input hash was recorded, so check the audit trail for the copy step and for whether the room was proven gone.</p>
+      {% elif r.decisions.send_file and r.decisions.send_file.answer == "yes" %}<p class="small">The run stopped after you said yes, but before the tool was ready. Your file had not been copied in: nothing entered the room.</p>
+      {% elif r.decisions.send_file and r.decisions.send_file.answer == "automatic" %}<p class="small">This run had no person at the gate. It stopped before the file was copied in: no input is recorded.</p>
+      {% elif r.decisions.send_file %}<p class="small">The run stopped before you said yes: your file did not go in.</p>
+      {% else %}<p class="small">No input is recorded for this run. The audit trail has the detail.</p>{% endif %}
     {% endif %}
     <h2>Walls tested</h2>
     {% if r.wall_check %}

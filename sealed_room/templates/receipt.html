@@ -90,8 +90,10 @@
 {% elif x.tool.wheels or x.tool.wheel_archive_sha256 %}
 <div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was fetched but not installed in this run.</p>
   <p class="small" style="margin:6px 0 0">{{ x.tool.wheels|length }} wheels, packed as one archive. Archive SHA-256: <span class="mono hash">{{ x.tool.wheel_archive_sha256 }}</span></p></div>
+{% elif x.rooms|selectattr("kind", "equalto", "download")|list %}
+<div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was not installed in this run. A download room was opened to fetch it (open network, no study data), but no fetched archive is recorded.</p></div>
 {% else %}
-<div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was not installed in this run: nothing was fetched or installed.</p></div>
+<div class="box"><p style="margin:0"><span class="mono">{{ x.tool.spec or "The tool" }}</span> was not installed in this run: no download room was opened, so nothing was fetched or installed.</p></div>
 {% endif %}
 
 <h2>Files</h2>

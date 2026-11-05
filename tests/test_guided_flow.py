@@ -443,7 +443,7 @@ def test_failed_run_after_copy_in_does_not_claim_no_data_went_in(client):
     assert "before any of your data went in" not in page and "after your file had gone in" in page
     rec2 = good_record(); rec2.update(run_id="cd34", status="failed", error="x", inputs=[], outputs=[], decisions={})
     save(runs, rec2)
-    assert "did not go in" in c.get("/runs/cd34").text
+    assert "No input is recorded for this run" in c.get("/runs/cd34").text
 
 
 def test_a_leaked_wall_is_drawn_as_a_leak_not_as_a_second_door():
@@ -679,3 +679,104 @@ def test_a_held_upload_that_fails_at_confirm_leaves_no_files(client):
     (runs / "_staging" / f"{token}.csv").write_text("not,a,study\n")   # damaged after the preview
     res = c.post("/runs", data={"tool": "admet-ai", "source": "upload", "token": token})
     assert res.status_code == 400 and not list((runs / "_staging").glob(f"{token}.*"))
+
+
+# --- third review ------------------------------------------------------------------------------------------------
+
+def failed_after_yes(installed):
+    rec = good_record()
+    rec.update(status="failed", error="x", inputs=[], outputs=[], results_preview=None,
+               decisions={"send_file": {"answer": "yes", "at": "2026-11-04T10:00:30+00:00"}})
+    rec["tool"]["version_installed"] = installed
+    return rec
+
+
+def test_yes_before_the_tool_was_ready_says_the_file_did_not_go_in(client):
+    c, runs = client
+    save(runs, failed_after_yes(None))
+    page = c.get("/runs/ab12").text
+    assert "before the tool was ready" in page and "may have entered" not in page
+    save(runs, dict(failed_after_yes("2.0.1"), run_id="cd34"))
+    assert "may have entered the room" in c.get("/runs/cd34").text
+
+
+def test_failed_run_wording_for_automatic_and_old_records(client):
+    c, runs = client
+    auto = failed_after_yes(None); auto["decisions"] = {"send_file": {"answer": "automatic", "at": "2026-11-04T10:00:30+00:00"}}
+    save(runs, auto)
+    page = c.get("/runs/ab12").text
+    assert "no person at the gate" in page and "before you were asked" not in page
+    old = failed_after_yes(None); old.update(run_id="cd34", decisions={})
+    save(runs, old)
+    page = c.get("/runs/cd34").text
+    assert "No input is recorded for this run" in page and "did not go in" not in page
+
+
+def test_a_failed_fetch_does_not_say_no_download_room_was_opened(client):
+    c, runs = client
+    rec = failed_after_yes(None)
+    rec["tool"] = {"spec": "admet-ai==2.0.1", "wheels": [], "wheel_archive_sha256": None, "version_installed": None}
+    save(runs, rec)                                         # good_record has a download room
+    page = c.get("/runs/ab12/receipt").text
+    assert "A download room was opened to fetch it" in page and "no download room was opened" not in page
+    rec["rooms"] = [r for r in rec["rooms"] if r["kind"] != "download"]
+    save(runs, rec)
+    assert "no download room was opened" in c.get("/runs/ab12/receipt").text
+
+
+def test_archive_hash_alone_counts_as_fetched(client):
+    c, runs = client
+    rec = failed_after_yes(None)
+    rec["tool"] = {"spec": "admet-ai==2.0.1", "wheels": [], "wheel_archive_sha256": H, "version_installed": None}
+    save(runs, rec)
+    assert "was fetched but not installed" in c.get("/runs/ab12/receipt").text
+
+
+def test_a_swept_held_upload_leaves_no_running_record_and_frees_the_slot(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    page = c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")}).text
+    token = page.split('name="token" value="')[1].split('"')[0]
+    real = web.validate_study
+    def sweep_then_validate(path):
+        out = real(path)
+        (runs / "_staging" / f"{token}.csv").unlink()      # swept between the check and the copy
+        return out
+    monkeypatch.setattr(web, "validate_study", sweep_then_validate)
+    res = c.post("/runs", data={"tool": "admet-ai", "source": "upload", "token": token})
+    assert res.status_code == 400 and "no longer held" in res.text
+    assert not [p for p in runs.glob("*") if p.is_dir() and p.name != "_staging"], "a run directory was left behind"
+    assert not c.app.state.run_lock.locked()
+
+
+def test_prepare_run_cleans_up_when_the_copy_fails(tmp_path, monkeypatch):
+    import sealed_room.service as service
+    settings = load_settings()
+    settings = type(settings)(**{**settings.__dict__, "runs_dir": tmp_path / "runs"})
+    source = tmp_path / "s.csv"; source.write_text("compound_id,smiles\nX1,CCO\n")
+    monkeypatch.setattr(service.shutil, "copyfile", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        service.prepare_run(settings, "admet-ai", source, "s.csv", True)
+    assert not list((tmp_path / "runs").glob("*"))
+
+
+def test_failed_attach_write_leaves_no_temp_file(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    save(runs, good_record())
+    monkeypatch.setattr(web.os, "replace", lambda *a, **k: (_ for _ in ()).throw(OSError("nope")))
+    with pytest.raises(OSError):
+        web._record_attachment(runs, "ab12", "Name")
+    assert not list((runs / "ab12").glob("*.tmp"))
+
+
+def test_every_preview_sweeps_old_held_uploads(client):
+    import os, time
+    import sealed_room.web as web
+    c, runs = client
+    folder = runs / "_staging"; folder.mkdir(exist_ok=True)
+    old = time.time() - web.STAGED_MAX_AGE_S - 60
+    for ext in ("csv", "json"):
+        f = folder / f"dead.{ext}"; f.write_text("x"); os.utime(f, (old, old))
+    c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")})
+    assert not list(folder.glob("dead.*"))

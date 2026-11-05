@@ -27,10 +27,16 @@ def new_run_id(runs_dir: Path) -> str:
 def prepare_run(settings: Settings, tool: str, study_source: Path, display_name: str, synthetic: bool,
                 control: RunControl | None = None) -> tuple[RunRequest, RunRecord]:
     """Create the run directory and a private copy of the study file, so later edits to the source cannot change the run."""
+    if not study_source.is_file():
+        raise FileNotFoundError(str(study_source))  # before any run directory exists
     run_id = new_run_id(settings.runs_dir)
     record = RunRecord(run_id, settings.runs_dir)
     study_copy = record.dir / "study.csv"
-    shutil.copyfile(study_source, study_copy)
+    try:
+        shutil.copyfile(study_source, study_copy)
+    except OSError:
+        shutil.rmtree(record.dir, ignore_errors=True)  # no thread owns this record, so it must not stay "running"
+        raise
     # What the person handed over, recorded before any room exists: the drawing shows the file "with you" only on this line.
     record.update(study={"name": display_name, "sha256": sha256_file(study_copy), "rows": validate_study(study_copy),
                          "synthetic": synthetic})
