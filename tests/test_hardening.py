@@ -60,6 +60,18 @@ def test_wall_check_runs_before_fetch_install_and_the_agent(stubbed):
     assert calls == ["wall_check", "fetch", "install", "agent"]
 
 
+def test_only_the_sealed_room_exists_when_the_wall_check_runs(stubbed, monkeypatch, runner):
+    calls, request, record, msb = stubbed
+    seen: list[set] = []
+
+    def spy(*a, **k):
+        seen.append(set(runner.rooms))
+
+    monkeypatch.setattr(orchestrator, "_wall_check", spy)
+    execute_run(load_settings(), msb, None, request, record)
+    assert seen == [{"sr-ab12"}]  # no open-network room yet
+
+
 def test_failed_wall_check_means_no_fetch_no_install_no_agent_and_rooms_gone(stubbed, monkeypatch, runner):
     calls, request, record, msb = stubbed
 

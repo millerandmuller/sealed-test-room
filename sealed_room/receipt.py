@@ -35,7 +35,9 @@ def unclean_reasons(record: dict) -> list[str]:
         if not room.get("verified_absent"):
             reasons.append(f"room {room['id']} was not proven absent")
     kinds = {room["kind"] for room in rooms}
-    if not {"download", "sealed"} <= kinds:
+    # A run that failed its wall check never opens a download room, by design: nothing is fetched into a room that failed.
+    needed = {"sealed"} if record.get("wall_check_verdict") == "FAILED" else {"download", "sealed"}
+    if not needed <= kinds:
         reasons.append("the record lacks a download room or a sealed room")
     if len(record.get("wall_check", [])) < 3:
         reasons.append("the wall check has fewer than three rows")
