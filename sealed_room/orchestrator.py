@@ -152,7 +152,7 @@ def _gate(control: RunControl | None, record: RunRecord, settings: Settings) -> 
         return 0.0
     wait_s = int(settings.caps.get("gate_wait_s", 300))
     asked = now_iso()
-    record.update(awaiting="gate")
+    record.update(awaiting="gate", awaiting_since=now_iso())
     _phase(record, "gate", "Walls tested. Waiting for you to decide whether your file goes in.")
     started = time.monotonic()
     answer = control.wait_gate(wait_s)
@@ -172,7 +172,7 @@ def _wait_for_close(control: RunControl | None, record: RunRecord, settings: Set
         record.set_decision("close_room", {"by": "automatic", "at": now_iso()})
         return "closed automatically"
     wait_s = int(settings.caps.get("close_wait_s", 300))
-    record.update(awaiting="close")
+    record.update(awaiting="close", awaiting_since=now_iso())
     _phase(record, "close", "Results are in. The room stays open until you close it.")
     by = control.wait_close(wait_s)
     record.update(awaiting=None)

@@ -194,7 +194,7 @@ def test_receipt_prints_fda_url_names_endpoint_and_puts_results_above_code(clien
 
 def test_busy_message_is_not_shown_when_no_run_holds_the_lock(client):
     c, _ = client
-    assert "A sealed run is in progress" not in c.get("/?busy=1").text
+    assert "Someone else is in the room" not in c.get("/?busy=1").text
 
 
 def test_running_page_shows_seconds_since_the_last_step(client):

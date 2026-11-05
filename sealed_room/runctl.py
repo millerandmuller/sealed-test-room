@@ -6,6 +6,7 @@ tests) is automatic: nothing waits. Every wait has a time limit so a person who 
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 
 
 class RunControl:
@@ -78,3 +79,27 @@ class ControlRegistry:
     def drop(self, run_id: str) -> None:
         with self._lock:
             self._controls.pop(run_id, None)
+
+
+def slot_free_within_s(record: dict, caps: dict, now: datetime) -> int:
+    """An upper bound, in seconds, on how long a run still holds the room: every wait runs out and the run cap applies.
+
+    At the gate: the rest of the gate wait, then the whole run if the answer is yes, then the close wait.
+    Working: what is left of the run cap (time spent waiting at the gate does not count against it), then the close wait.
+    At the close step: the rest of the close wait.
+    """
+    gate_wait, close_wait, run_cap = (int(caps.get(k, d)) for k, d in (("gate_wait_s", 300), ("close_wait_s", 300), ("whole_run_s", 900)))
+
+    def seconds_between(a: str | None, b: datetime) -> float:
+        return max(0.0, (b - datetime.fromisoformat(a)).total_seconds()) if a else 0.0
+
+    waited_at_gate = 0.0
+    send = (record.get("decisions") or {}).get("send_file") or {}
+    if send.get("asked") and send.get("at"):
+        waited_at_gate = max(0.0, (datetime.fromisoformat(send["at"]) - datetime.fromisoformat(send["asked"])).total_seconds())
+    if record.get("awaiting") == "close":
+        return int(max(0.0, close_wait - seconds_between(record.get("awaiting_since"), now)))
+    if record.get("awaiting") == "gate":
+        return int(max(0.0, gate_wait - seconds_between(record.get("awaiting_since"), now)) + run_cap + close_wait)
+    worked = seconds_between(record.get("started"), now) - waited_at_gate
+    return int(max(0.0, run_cap - worked) + close_wait)

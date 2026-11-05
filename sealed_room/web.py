@@ -13,7 +13,8 @@ import secrets
 import tempfile
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+import math
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -23,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import APPROVED_TOOL_LABEL, TOOL_CARD, Settings, load_settings
 from .drawing import picture, screen_for
-from .runctl import ControlRegistry, RunControl
+from .runctl import ControlRegistry, RunControl, slot_free_within_s
 from .failure_words import plain_failure
 from .intake import MAX_BYTES, IntakeError, preview_study, validate_study
 from .msb import Msb
@@ -155,15 +156,22 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
                          secure=request.url.scheme == "https")  # behind the TLS proxy uvicorn reads X-Forwarded-Proto
         return reply
 
+    def slot_minutes(run_id: str | None) -> int:
+        """Whole minutes, rounded up, within which the run holding the room is certain to have freed it."""
+        record = load_record(settings.runs_dir, run_id) if run_id and RUN_ID_RE.match(run_id) else None
+        record = record or {}
+        return max(1, math.ceil(slot_free_within_s(record, settings.caps, datetime.now(timezone.utc)) / 60))
+
     @app.get("/", response_class=HTMLResponse)
     def tool_screen(request: Request, busy: str = ""):
         """Screen 1: choose the tool."""
         if not authorized(request):
             return access_page(request)
-        # Only say "in progress" while a run really holds the lock (a stale bookmark must not claim it).
-        error = "A sealed run is in progress. Wait for it to finish, then run again." if busy and run_lock.locked() else None
-        context = tool_context(error)
-        context["active_run"] = app.state.active_run if error else None
+        # Only say the room is taken while a run really holds the lock (a stale bookmark must not claim it).
+        taken = bool(busy) and run_lock.locked()
+        context = tool_context()
+        context["active_run"] = app.state.active_run if taken else None
+        context["busy_minutes"] = slot_minutes(app.state.active_run) if taken else 0
         return templates.TemplateResponse(request, "tool.html", context)
 
     @app.post("/data", response_class=HTMLResponse)

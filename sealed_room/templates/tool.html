@@ -4,7 +4,8 @@
 <h1>Choose the tool</h1>
 <p class="lede">A new tool, your study data, one door. You decide at every step; the agent does the work.</p>
 
-{% if error %}<div class="banner bad">{{ error }}{% if active_run %} <a href="/runs/{{ active_run }}">Open the run in progress</a>.{% endif %}</div>{% endif %}
+{% if busy_minutes %}<div class="banner calm"><strong>Someone else is in the room.</strong> It frees in at most {{ busy_minutes }} minute{{ "" if busy_minutes == 1 else "s" }}.{% if active_run %} <a href="/runs/{{ active_run }}">Look at that run</a>.{% endif %}</div>
+{% elif error %}<div class="banner bad">{{ error }}</div>{% endif %}
 
 <div class="box toolcard">
   <p class="small" style="margin:0 0 4px">The one tool on this demo's approved list</p>

@@ -67,12 +67,13 @@
     <p class="where"><strong>Where your file is:</strong>
       {% if p.copy_in_room %}a copy is inside the sealed room; the original stays with you.
       {% elif p.results_out %}the results are back with you; the room has no study file after it is destroyed.
-      {% else %}with you. It has not entered any room yet.{% endif %}</p>
+      {% else %}with you; it waits until the tool is installed and goes in last.{% endif %}</p>
     {% if r.steps %}<p class="spinner">Working: {{ r.steps[-1].t|seconds_since }} s since the last step.</p>{% endif %}
 
   {# ---------------- screen 5: results ---------------- #}
   {% elif screen == 5 %}
     <p class="lede" style="margin-top:0">These are the tool's predictions for your {{ results|length }} compounds. The two reference labels are known outcomes from a public list, shown so you can see where the tool stands.</p>
+    {% if p.copy_in_room %}<p class="small" style="margin:8px 0 0">A copy of your file is still in the room. Close it when you are done reading.</p>{% endif %}
     <p class="actions"><a class="btn primary-link" href="/runs/{{ r.run_id }}?step=6">Next: close the room</a></p>
     <table>
       <tr><th>Compound</th><th>DILI score (tool output)</th><th>Reference label</th></tr>

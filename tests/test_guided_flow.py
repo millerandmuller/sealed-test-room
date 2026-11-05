@@ -542,7 +542,8 @@ def test_busy_notice_links_to_the_run_in_progress(client):
                 for cell in (fn.endpoint.__closure__ or ()) if isinstance(cell.cell_contents, type(threading.Lock())))
     with lock:
         page = c.get("/?busy=1").text
-    assert "Open the run in progress" in page and "/runs/ab12" in page
+    assert "Someone else is in the room" in page and "/runs/ab12" in page
+    assert "banner bad" not in page and "frees in at most" in page
 
 
 # --- second review: wording that must not lie, and tests that can fail ---------------------------------------------
@@ -780,3 +781,86 @@ def test_every_preview_sweeps_old_held_uploads(client):
         f = folder / f"dead.{ext}"; f.write_text("x"); os.utime(f, (old, old))
     c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")})
     assert not list(folder.glob("dead.*"))
+
+
+# --- wording pass after the walkthrough ---------------------------------------------------------------------------
+
+def test_slot_bound_covers_every_path_a_run_can_still_take():
+    from datetime import datetime, timedelta, timezone
+    from sealed_room.runctl import slot_free_within_s
+    caps = {"gate_wait_s": 300, "close_wait_s": 300, "whole_run_s": 900}
+    t0 = datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)
+    at = lambda s: (t0 + timedelta(seconds=s)).isoformat()
+    # at the gate with 100 s gone: the rest of the gate wait (200), a yes then the whole run (900), then the close wait (300)
+    gate = {"awaiting": "gate", "awaiting_since": at(0), "started": at(0), "decisions": {}}
+    assert slot_free_within_s(gate, caps, t0 + timedelta(seconds=100)) == 200 + 900 + 300
+    # at the close step: only the rest of the close wait
+    close = {"awaiting": "close", "awaiting_since": at(0), "started": at(0), "decisions": {}}
+    assert slot_free_within_s(close, caps, t0 + timedelta(seconds=250)) == 50
+    # working after a 120 s gate wait, 200 s after the start: gate time does not count against the run cap
+    work = {"awaiting": None, "started": at(0), "decisions": {"send_file": {"asked": at(10), "at": at(130), "answer": "yes"}}}
+    assert slot_free_within_s(work, caps, t0 + timedelta(seconds=200)) == (900 - 80) + 300
+    # a missing record still gives a finite, honest bound
+    assert slot_free_within_s({}, caps, t0) >= 300
+
+
+def test_busy_page_says_how_long_in_minutes_from_the_held_run(client):
+    from datetime import datetime, timezone
+    c, runs = client
+    rec = good_record()
+    rec.update(status="running", awaiting="close", awaiting_since=datetime.now(timezone.utc).isoformat())
+    save(runs, rec)
+    c.app.state.active_run = "ab12"
+    lock = next(cell.cell_contents for fn in c.app.routes if getattr(fn, "name", "") == "tool_screen"
+                for cell in (fn.endpoint.__closure__ or ()) if isinstance(cell.cell_contents, type(threading.Lock())))
+    with lock:
+        page = c.get("/?busy=1").text
+    assert "Someone else is in the room." in page and "frees in at most 5 minutes" in page and "banner bad" not in page
+
+
+def test_screen_four_says_the_file_goes_in_last_before_it_has_entered(client):
+    c, runs = client
+    rec = good_record()
+    rec.update(status="running", inputs=[], outputs=[], results_preview=None, door=None,
+               decisions={"send_file": {"answer": "yes", "at": "2026-11-04T10:00:30+00:00"}})
+    rec["rooms"] = rec["rooms"][1:]
+    rec["rooms"][0].update(destroyed=None, verified_absent=None)
+    save(runs, rec)
+    page = c.get("/runs/ab12/fragment?step=4").text
+    assert "with you; it waits until the tool is installed and goes in last." in page
+
+
+def test_results_screen_warns_that_a_copy_is_still_in_the_open_room(client):
+    c, runs = client
+    rec = good_record()
+    rec["status"] = "running"
+    rec["awaiting"] = "close"
+    rec["rooms"][1].update(destroyed=None, verified_absent=None)
+    save(runs, rec)
+    page = c.get("/runs/ab12/fragment?step=5").text
+    assert "A copy of your file is still in the room. Close it when you are done reading." in page
+
+
+def test_results_screen_does_not_claim_a_copy_in_a_room_that_is_gone(client):
+    c, runs = client
+    save(runs, good_record())
+    assert "still in the room" not in c.get("/runs/ab12/fragment?step=5").text
+
+
+def test_audit_shows_an_open_room_as_open_not_as_unverified(client):
+    c, runs = client
+    rec = good_record()
+    rec["status"] = "running"
+    rec["rooms"][1].update(destroyed=None, verified_absent=None)
+    save(runs, rec)
+    page = c.get("/runs/ab12/audit").text
+    assert "Room open" in page and "NOT VERIFIED" not in page
+
+
+def test_audit_still_calls_a_destroyed_but_unproven_room_unverified(client):
+    c, runs = client
+    rec = good_record()
+    rec["rooms"][1].update(verified_absent=None)  # destroyed, never proven
+    save(runs, rec)
+    page = c.get("/runs/ab12/audit").text
+    assert "NOT VERIFIED" in page and "Room open" not in page

@@ -61,7 +61,7 @@
   {% for room in x.rooms %}
     <tr><td class="mono">{{ room.id }}</td><td>{{ room.kind }}{% if room.kind == "download" %} <span class="small">(open network, no study data)</span>{% endif %}</td>
       <td class="mono">{{ room.created|hhmmss }}</td><td class="mono">{{ room.destroyed|hhmmss }}</td>
-      <td class="mono">{% if room.verified_absent %}{{ room.verified_absent|hhmmss }}{% else %}<strong style="color:var(--red)">NOT VERIFIED</strong>{% endif %}</td></tr>
+      <td class="mono">{% if room.verified_absent %}{{ room.verified_absent|hhmmss }}{% elif x.status == "running" and not room.destroyed %}<span style="color:var(--muted)">Room open</span>{% else %}<strong style="color:var(--red)">NOT VERIFIED</strong>{% endif %}</td></tr>
   {% endfor %}
 </table>
 {% for room in x.rooms if room.destroy_check %}
