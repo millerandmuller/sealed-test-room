@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import fcntl
+import unicodedata
+from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import json
@@ -35,6 +37,7 @@ HERE = Path(__file__).resolve().parent
 RUN_ID_RE = re.compile(r"^[0-9a-f]{4}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")
 STAGED_MAX_AGE_S = 3600
+STAGED_MAX_FILES = 40
 NAME_MAX = 80
 ACCESS_COOKIE = "stm_access"
 ACCESS_COOKIE_MAX_AGE_S = 12 * 3600
@@ -91,7 +94,14 @@ def step_line(step: dict) -> str:
 def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAPI:
     """Build the app. Run with `uvicorn sealed_room.web:create_app --factory`. `cleanup=False` is for tests without msb."""
     settings = settings or load_settings()
-    app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None)
+    controls = ControlRegistry()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        controls.abandon_all()  # a run waiting for a person closes its room now instead of being killed with it open
+
+    app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters.update(plain_failure=plain_failure, hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since, seconds_since=seconds_since)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
@@ -99,6 +109,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
     # Startup cleanup deletes every room and marks "running" records aborted, so only the one process that owns
     # the service lock may do it: a second process (a script, a test, a second worker) must not touch live work.
+    if (settings.runs_dir / "_staging").is_dir():
+        _sweep_staged(settings.runs_dir / "_staging")
     app.state.service_lock = _claim_service_lock(settings.runs_dir) if cleanup else None
     if app.state.service_lock is not None:
         cleanup_orphans(Msb(settings.msb_bin))
@@ -118,7 +130,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         message = error or (None if configured else "No access code is configured on this host.")
         return templates.TemplateResponse(request, "access.html", {"error": message}, status_code=status)
 
-    controls = ControlRegistry()
+    attach_lock = threading.Lock()
+    app.state.controls = controls
 
     def tool_context(error: str | None = None) -> dict:
         return {"rules": settings.rules, "error": error, "approved_tool": APPROVED_TOOL_LABEL, "card": TOOL_CARD}
@@ -217,7 +230,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             _discard(staged)
             return templates.TemplateResponse(request, "data.html", data_context(str(exc)), status_code=400)
         if not run_lock.acquire(blocking=False):
-            _discard(staged)
+            if not token:
+                _discard(staged)  # a held (previewed) upload stays held so the person can try again
             # Redirect instead of rendering at /runs, so a browser refresh cannot submit the form again.
             return RedirectResponse("/?busy=1", status_code=303)
         try:
@@ -229,6 +243,8 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             raise
         finally:
             _discard(staged)  # the run keeps its own private copy
+            if token:
+                (settings.runs_dir / "_staging" / f"{token}.json").unlink(missing_ok=True)
 
         def work() -> None:
             try:
@@ -279,9 +295,10 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
     def answer_gate(request: Request, run_id: str, answer: str = Form("")):
         if (blocked := gate(request)) is not None:
             return blocked
-        record_or_404(run_id)
+        record = record_or_404(run_id)
         control = controls.get(run_id)
-        if control is not None and answer in ("yes", "no"):
+        # Only an answer given while the question is on screen counts: no early answers from a stale tab or a script.
+        if control is not None and record.get("awaiting") == "gate" and answer in ("yes", "no"):
             control.answer_gate(answer == "yes")
         return back_to(run_id)
 
@@ -301,10 +318,11 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         if (blocked := gate(request)) is not None:
             return blocked
         record = record_or_404(run_id)
-        clean_name = " ".join(name.split())[:NAME_MAX]
+        clean_name = _clean_name(name)
         if record["status"] == "completed" and clean_name and not (record.get("decisions") or {}).get("attached"):
             # The orchestrator thread has finished (status completed), so this is the only writer left for this run.
-            _record_attachment(settings.runs_dir, run_id, clean_name)
+            with attach_lock:
+                _record_attachment(settings.runs_dir, run_id, clean_name)
         return back_to(run_id)
 
     def make_receipt(run_id: str) -> dict:
@@ -368,14 +386,23 @@ def _discard(path: Path | None) -> None:
 def _keep_staged(staged: Path, display: str, synthetic: bool) -> str:
     """Hold a previewed upload under a random token until the person confirms (or an hour passes)."""
     folder = staged.parent
+    _sweep_staged(folder)
     token = secrets.token_hex(8)
     staged.rename(folder / f"{token}.csv")
     (folder / f"{token}.json").write_text(json.dumps({"display": display, "synthetic": synthetic}))
-    cutoff = time.time() - STAGED_MAX_AGE_S
-    for old in folder.glob("*"):
-        if old.is_file() and old.stat().st_mtime < cutoff:
-            old.unlink(missing_ok=True)
     return token
+
+
+def _sweep_staged(folder: Path) -> None:
+    """Remove staged uploads nobody confirmed within the hour."""
+    cutoff = time.time() - STAGED_MAX_AGE_S
+    files = sorted((f for f in folder.glob("*") if f.is_file()), key=lambda f: f.stat().st_mtime, reverse=True)
+    for rank, old in enumerate(files):
+        try:
+            if old.stat().st_mtime < cutoff or rank >= STAGED_MAX_FILES:  # old, or beyond the newest few
+                old.unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 def _take_staged(runs_dir: Path, token: str) -> tuple[Path | None, str, bool]:
@@ -386,8 +413,10 @@ def _take_staged(runs_dir: Path, token: str) -> tuple[Path | None, str, bool]:
     csv_path, meta_path = folder / f"{token}.csv", folder / f"{token}.json"
     if not csv_path.is_file() or not meta_path.is_file():
         return None, "", False
-    meta = json.loads(meta_path.read_text())
-    meta_path.unlink(missing_ok=True)
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, ValueError):
+        return None, "", False  # used by another request a moment ago
     return csv_path, meta["display"], bool(meta["synthetic"])
 
 
@@ -395,7 +424,15 @@ def _record_attachment(runs_dir: Path, run_id: str, name: str) -> None:
     """Write the attachment into the stored record of a finished run, atomically."""
     path = runs_dir / run_id / "run.json"
     data = json.loads(path.read_text())
+    if (data.get("decisions") or {}).get("attached"):
+        return  # the first attachment stands
     data.setdefault("decisions", {})["attached"] = {"name": name, "at": now_iso()}
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    os.replace(tmp, path)
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, suffix=".tmp", delete=False) as fh:
+        fh.write(json.dumps(data, indent=2))
+    os.replace(fh.name, path)
+
+
+def _clean_name(name: str) -> str:
+    """One line, no control or direction-override characters, at most NAME_MAX characters."""
+    visible = "".join(ch for ch in name if not unicodedata.category(ch).startswith("C"))
+    return " ".join(visible.split())[:NAME_MAX]

@@ -319,11 +319,11 @@ def test_every_drawn_state_has_a_record_line_behind_it():
         if p["download"]:
             assert any(r["kind"] == "download" for r in rec["rooms"])
         if p["copy_in_room"]:
-            assert rec["inputs"] and p["sealed"] == "open", "a copy is drawn in the room without an input line and an open room"
+            assert rec["inputs"] and p["sealed"] in ("open", "unverified"), "a copy is drawn in the room without an input line and a room not proven gone"
         if p["results_out"]:
             assert rec["outputs"]
         assert p["door_calls"] == len((rec["door"] or {}).get("calls", []))
-        assert p["walls"] == [{"host": w["host"], "verdict": w["verdict"]} for w in rec["wall_check"]]
+        assert [(w["host"], w["verdict"]) for w in p["walls"]] == [(w["host"], w["verdict"]) for w in rec["wall_check"]]
 
 
 def test_the_file_is_never_drawn_in_the_download_room():
@@ -367,3 +367,159 @@ class TemplateRenderer:
         from sealed_room.web import HERE
         env = Environment(loader=FileSystemLoader(str(HERE / "templates")), autoescape=True)
         return env.get_template("_art.html").render(p=p, fresh_gone=False)
+
+
+# --- findings from the adversarial review ------------------------------------------------------------------------
+
+def test_gate_answers_before_the_gate_is_shown_do_not_count(client):
+    c, runs = client
+    control = RunControl()
+    c.app.state.controls.add("ab12", control)
+    early = gated_record(); early["awaiting"] = None        # the walls are still being tested
+    save(runs, early)
+    c.post("/runs/ab12/gate", data={"answer": "yes"})
+    assert control.wait_gate(0) == "timeout", "an answer given before the question was shown was accepted"
+    control2 = RunControl()
+    c.app.state.controls.add("ab12", control2)
+    save(runs, gated_record())                              # now the question is on screen
+    c.post("/runs/ab12/gate", data={"answer": "yes"})
+    assert control2.wait_gate(0) == "yes"
+    c.post("/runs/ab12/gate", data={"answer": "bogus"})
+
+
+def test_first_gate_answer_wins():
+    control = RunControl()
+    assert control.answer_gate(False) is True and control.answer_gate(True) is False
+    assert control.wait_gate(1) == "no"
+
+
+def test_service_stop_wakes_waiting_runs_and_closes_rooms(guided, runner):
+    calls, request, record, msb, control = guided
+    thread = run_in_thread(request, record, msb)
+    wait_for(record, "gate")
+    control.abandon()
+    thread.join(5)
+    snap = record.snapshot()
+    assert snap["status"] == "declined" and snap["decisions"]["send_file"]["answer"] == "shutdown" and runner.rooms == set()
+    assert not validate_receipt(build_receipt(snap))
+
+
+def test_service_stop_at_close_closes_the_room_and_says_so(guided, runner):
+    calls, request, record, msb, control = guided
+    control.answer_gate(True)
+    thread = run_in_thread(request, record, msb)
+    wait_for(record, "close")
+    control.abandon()
+    thread.join(5)
+    snap = record.snapshot()
+    assert snap["status"] == "completed" and snap["decisions"]["close_room"]["by"] == "shutdown" and runner.rooms == set()
+    assert any("service stopped" in n for n in snap["notes"]) and not validate_receipt(build_receipt(snap))
+
+
+def test_a_dead_run_does_not_offer_the_gate(client):
+    c, runs = client
+    rec = gated_record(); rec["status"] = "aborted"; rec["finished"] = "2026-11-04T10:01:00+00:00"
+    save(runs, rec)
+    page = c.get("/runs/ab12").text
+    assert "Yes, send my file in" not in page and "counts as no" not in page
+
+
+def test_restart_clears_the_waiting_marker():
+    import tempfile, pathlib
+    from sealed_room.runrecord import reconcile_stale_runs
+    with tempfile.TemporaryDirectory() as d:
+        runs = pathlib.Path(d); (runs / "ab12").mkdir()
+        (runs / "ab12" / "run.json").write_text(json.dumps(gated_record()))
+        assert reconcile_stale_runs(runs) == ["ab12"]
+        stored = json.loads((runs / "ab12" / "run.json").read_text())
+        assert stored["status"] == "aborted" and stored["awaiting"] is None
+
+
+def test_failed_run_after_copy_in_does_not_claim_no_data_went_in(client):
+    c, runs = client
+    rec = good_record(); rec.update(status="failed", error="RuntimeError: results.csv has no DILI column.", study=None, decisions={})
+    save(runs, rec)
+    page = c.get("/runs/ab12").text
+    assert "before any of your data went in" not in page and "after your file had gone in" in page
+    rec2 = good_record(); rec2.update(run_id="cd34", status="failed", error="x", inputs=[], outputs=[], decisions={})
+    save(runs, rec2)
+    assert "before your file went in" in c.get("/runs/cd34").text
+
+
+def test_a_leaked_wall_is_drawn_as_a_leak_not_as_a_second_door():
+    rec = base_record()
+    rec["wall_check"][0]["verdict"] = "ALLOWED"             # pypi.org reachable
+    html = TemplateRenderer.render(picture(rec))
+    assert "pypi.org REACHED: not sealed" in html and html.count('class="probe allowed"') == 1
+
+
+def test_completed_record_with_a_room_not_proven_gone_never_says_verified(client):
+    c, runs = client
+    rec = base_record(); rec["rooms"][1]["verified_absent"] = None
+    save(runs, rec)
+    page = c.get("/runs/ab12").text
+    assert "Room gone, verified." not in page and "Removal NOT verified" in page
+
+
+def test_unverified_download_room_is_flagged_and_unverified_sealed_room_keeps_the_copy():
+    rec = base_record(); rec["rooms"][0]["verified_absent"] = None; rec["rooms"][1]["verified_absent"] = None
+    p = picture(rec)
+    html = TemplateRenderer.render(p)
+    assert p["copy_in_room"] and html.count("NOT proven gone") == 2 and not p["all_gone"]
+
+
+def test_concurrent_attach_keeps_the_first_name_and_a_valid_record(client):
+    c, runs = client
+    save(runs, good_record())
+    codes = []
+    def attach(i):
+        codes.append(c.post("/runs/ab12/attach", data={"name": f"Person{i}"}, follow_redirects=False).status_code)
+    threads = [threading.Thread(target=attach, args=(i,)) for i in range(16)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    assert set(codes) == {303}
+    stored = json.loads((runs / "ab12" / "run.json").read_text())
+    assert stored["decisions"]["attached"]["name"].startswith("Person")
+    assert not list((runs / "ab12").glob("*.tmp"))
+
+
+def test_attached_name_loses_control_and_direction_characters_and_is_capped(client):
+    c, runs = client
+    save(runs, good_record())
+    c.post("/runs/ab12/attach", data={"name": "A\u202eB\x00\x1b[31m" + "x" * 200})
+    name = json.loads((runs / "ab12" / "run.json").read_text())["decisions"]["attached"]["name"]
+    assert "\u202e" not in name and "\x00" not in name and "\x1b" not in name and len(name) == 80
+
+
+def test_oversize_csv_field_is_a_400_and_leaves_nothing_staged(client):
+    c, runs = client
+    big = b"compound_id,smiles\nX1," + b"C" * 200_000 + b"\n"
+    res = c.post("/data/preview", files={"study": ("big.csv", big, "text/csv")})
+    assert res.status_code == 400
+    assert not list((runs / "_staging").glob("*"))
+
+
+def test_state_changing_routes_and_the_audit_page_need_the_cookie(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNS_DIR", str(tmp_path / "runs"))
+    anon = TestClient(create_app(load_settings(), cleanup=False))
+    save(tmp_path / "runs", good_record())
+    for method, path in (("post", "/runs/ab12/gate"), ("post", "/runs/ab12/close"), ("post", "/runs/ab12/attach"),
+                         ("get", "/runs/ab12/audit"), ("get", "/data"), ("post", "/data/preview"), ("post", "/runs")):
+        res = getattr(anon, method)(path, follow_redirects=False)
+        assert res.status_code == 303 and res.headers["location"] == "/", path
+    assert "attached" not in json.loads((tmp_path / "runs" / "ab12" / "run.json").read_text()).get("decisions", {})
+
+
+def test_declined_run_needs_only_the_sealed_room_in_its_record():
+    rec = gated_record()
+    rec.update(status="declined", awaiting=None, finished="2026-11-04T10:01:00+00:00")
+    rec["rooms"][0].update(destroyed="2026-11-04T10:01:00+00:00", verified_absent="2026-11-04T10:01:01+00:00")
+    assert not any("download room" in why for why in unclean_reasons(rec))
+    rec2 = copy.deepcopy(rec); rec2["status"] = "failed"
+    assert any("download room" in why for why in unclean_reasons(rec2))
+
+
+def test_held_upload_survives_a_busy_redirect_and_is_removed_after_a_run_starts(client):
+    c, runs = client
+    page = c.post("/data/preview", files={"study": ("mine.csv", b"compound_id,smiles\nX1,CCO\n", "text/csv")}).text
+    token = page.split('name="token" value="')[1].split('"')[0]
+    assert (runs / "_staging" / f"{token}.csv").is_file()

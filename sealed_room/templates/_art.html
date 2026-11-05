@@ -1,6 +1,6 @@
 {# The picture. It draws only what `p` (drawing.picture, built from the run record) contains. The download room has no slot for a file. #}
 {% from "_macros.html" import doc %}
-<svg viewBox="0 0 760 {{ 350 if p.download else 290 }}" role="img" class="art"
+<svg viewBox="0 0 760 {{ 360 if p.download else 290 }}" role="img" class="art"
      aria-label="Sealed room drawing. {{ p.facts|join(' ') }}">
   {# with you #}
   {% if p.with_you %}
@@ -26,6 +26,9 @@
           <line x1="330" y1="{{ yy }}" x2="566" y2="{{ yy }}" class="probe blocked"/>
           <text x="566" y="{{ yy + 5 }}" class="xmark" text-anchor="middle">&#10005;</text>
           <text x="590" y="{{ yy + 4 }}" class="lbl bad">{{ w.host }} refused</text>
+        {% elif w.leak %}
+          <line x1="330" y1="105" x2="640" y2="105" class="probe leak"/>
+          <text x="590" y="99" class="lbl bad">{{ w.host }} REACHED: not sealed</text>
         {% else %}
           <line x1="330" y1="150" x2="640" y2="150" class="probe allowed"/>
         {% endif %}
@@ -40,6 +43,7 @@
   {# download room: open network, no study data, no file slot #}
   {% if p.download %}
     <g class="download {{ 'vanish' if p.download == 'gone' else '' }}">
+      {% if p.download == "unverified" %}<text x="435" y="346" text-anchor="middle" class="warn">removed, NOT proven gone</text>{% endif %}
       <rect x="300" y="286" width="270" height="48" rx="4" class="dl-wall"/>
       <text x="435" y="307" text-anchor="middle" class="cap">Download room: open network</text>
       <text x="435" y="324" text-anchor="middle" class="lbl">no study data inside</text>

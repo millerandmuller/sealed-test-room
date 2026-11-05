@@ -161,7 +161,8 @@ def _gate(control: RunControl | None, record: RunRecord, settings: Settings) -> 
     if answer == "yes":
         _phase(record, "gate", "You chose to send the file in.")
         return time.monotonic() - started
-    why = "You chose not to send the file in." if answer == "no" else f"No answer within {wait_s // 60} minutes, treated as no."
+    why = {"no": "You chose not to send the file in.",
+           "shutdown": "The service stopped while waiting for you, treated as no."}.get(answer, f"No answer within {wait_s // 60} minutes, treated as no.")
     raise RunDeclined(f"{why} The room is destroyed; nothing entered it.")
 
 
@@ -173,12 +174,14 @@ def _wait_for_close(control: RunControl | None, record: RunRecord, settings: Set
     wait_s = int(settings.caps.get("close_wait_s", 300))
     record.update(awaiting="close")
     _phase(record, "close", "Results are in. The room stays open until you close it.")
-    pressed = control.wait_close(wait_s)
+    by = control.wait_close(wait_s)
     record.update(awaiting=None)
-    record.set_decision("close_room", {"by": "person" if pressed else "timeout", "at": now_iso()})
-    if not pressed:
+    record.set_decision("close_room", {"by": by, "at": now_iso()})
+    if by == "timeout":
         record.add_note(f"Nobody closed the room within {wait_s // 60} minutes, so it was closed automatically.")
-    return "closed by you" if pressed else "closed automatically after no answer"
+    elif by == "shutdown":
+        record.add_note("The service stopped while the room was waiting to be closed, so it was closed automatically.")
+    return {"person": "closed by you", "timeout": "closed automatically after no answer"}.get(by, "closed automatically when the service stopped")
 
 
 def _door_check(settings: Settings, msb: Msb, sealed: Room, record: RunRecord, rows: int, deadline: float) -> None:

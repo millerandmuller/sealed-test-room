@@ -14,6 +14,7 @@ class RunControl:
         self._gate_event = threading.Event()
         self._gate_answer: str | None = None
         self._close_event = threading.Event()
+        self._close_by: str | None = None
 
     def answer_gate(self, yes: bool) -> bool:
         """First answer wins. Returns False if the gate was already answered."""
@@ -25,7 +26,7 @@ class RunControl:
         return True
 
     def wait_gate(self, timeout_s: float) -> str:
-        """'yes', 'no' or 'timeout'."""
+        """'yes', 'no', 'shutdown' or 'timeout'."""
         if not self._gate_event.wait(timeout_s):
             with self._lock:
                 if self._gate_answer is None:
@@ -33,11 +34,24 @@ class RunControl:
         return self._gate_answer or "timeout"
 
     def press_close(self) -> None:
+        with self._lock:
+            self._close_by = self._close_by or "person"
         self._close_event.set()
 
-    def wait_close(self, timeout_s: float) -> bool:
-        """True if the person pressed the button, False if the wait ran out."""
-        return self._close_event.wait(timeout_s)
+    def wait_close(self, timeout_s: float) -> str:
+        """'person' (pressed), 'shutdown' (the service is stopping) or 'timeout' (the wait ran out)."""
+        if not self._close_event.wait(timeout_s):
+            return "timeout"
+        return self._close_by or "person"
+
+    def abandon(self) -> None:
+        """The service is stopping: release any wait now, so the run closes its room instead of being killed with it open."""
+        with self._lock:
+            if self._gate_answer is None:
+                self._gate_answer = "shutdown"
+            self._close_by = self._close_by or "shutdown"
+        self._gate_event.set()
+        self._close_event.set()
 
 
 class ControlRegistry:
@@ -54,6 +68,12 @@ class ControlRegistry:
     def get(self, run_id: str) -> RunControl | None:
         with self._lock:
             return self._controls.get(run_id)
+
+    def abandon_all(self) -> None:
+        with self._lock:
+            controls = list(self._controls.values())
+        for control in controls:
+            control.abandon()
 
     def drop(self, run_id: str) -> None:
         with self._lock:

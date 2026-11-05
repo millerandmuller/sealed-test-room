@@ -28,7 +28,10 @@ def validate_study(path: Path) -> int:
     except UnicodeDecodeError as exc:
         raise IntakeError("The study file is not UTF-8 text.") from exc
     # Blank lines are skipped: most CSV exports end with one, and the result check skips them too.
-    rows = [row for row in csv.reader(text.splitlines()) if row]
+    try:
+        rows = [row for row in csv.reader(text.splitlines()) if row]
+    except csv.Error:
+        raise IntakeError("The study file is not a readable CSV.") from None
     if len(rows) < 2:
         raise IntakeError("The study file has a header but no compounds.")
     header = normalized_header(rows[0])

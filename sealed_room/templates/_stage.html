@@ -2,7 +2,7 @@
   <div data-slot="head">
     {% include "_steps.html" with context %}
     <div class="headrow">
-      <h1>{% if screen == 3 %}Open the room{% elif screen == 4 %}The agent works{% elif screen == 5 %}Results{% elif screen == 6 %}Close the room{% else %}{{ "Room gone" if r.status == "completed" else "Run " ~ r.run_id }}{% endif %}</h1>
+      <h1>{% if screen == 3 %}Open the room{% elif screen == 4 %}The agent works{% elif screen == 5 %}Results{% elif screen == 6 %}Close the room{% else %}{{ ("Room gone" if p.all_gone else "Room closed, removal not verified") if r.status == "completed" else "Run " ~ r.run_id }}{% endif %}</h1>
       <a class="audit noprint" href="/runs/{{ r.run_id }}/audit" title="The full record of this run: policy, wall rows, rooms, commands, hashes, code, door calls">Audit trail</a>
     </div>
     <p class="lede">Run {{ r.run_id }} &middot; tool <span class="mono">{{ r.tool.spec or "admet-ai==2.0.1" }}</span>
@@ -24,7 +24,8 @@
     {% if r.status == "declined" %}
       <div class="banner calm"><strong>You stopped here.</strong> Your file did not go in. The room was destroyed{% if p.sealed == "gone" %} and verified absent{% endif %}; nothing entered it.</div>
     {% elif r.status in ("failed", "aborted") %}
-      <p class="small">The run stopped before any of your data went in. Nothing from your file reached a room unless the audit trail says so.</p>
+      {% if r.inputs %}<p class="small">The run stopped after your file had gone in. The audit trail shows what happened to it and whether the room was proven gone.</p>
+      {% else %}<p class="small">The run stopped before your file went in: no input is recorded.</p>{% endif %}
     {% endif %}
     <h2>Walls tested</h2>
     {% if r.wall_check %}
@@ -40,7 +41,7 @@
     {% elif r.status == "running" %}<p class="spinner">Opening the room and testing its walls.</p>
     {% else %}<p class="small">The wall check did not run.</p>{% endif %}
 
-    {% if r.awaiting == "gate" %}
+    {% if r.awaiting == "gate" and r.status == "running" %}
       <div class="gate">
         <h2 style="margin-top:0">Walls tested. Send your file in?</h2>
         <p style="margin:0 0 6px">The room can reach one host and nothing else, and it is empty. If you say yes, {% if r.study %}<span class="mono">{{ r.study.name }}</span> ({{ r.study.rows }} compounds, sha256 <span class="mono">{{ r.study.sha256[:12] }}...</span>){% else %}your file{% endif %} goes in as a copy. If you say no, the room is destroyed and nothing enters it.</p>
@@ -93,7 +94,7 @@
   {# ---------------- screen 7: room gone, attach the receipt ---------------- #}
   {% else %}
     {% if r.status == "completed" %}
-      <div class="banner {{ 'ok' if clean else 'bad' }}"><strong>Room gone, verified.</strong>
+      <div class="banner {{ 'ok' if (clean and p.all_gone) else 'bad' }}"><strong>{{ "Room gone, verified." if p.all_gone else "Removal NOT verified: a room may still exist." }}</strong>
         {% for room in r.rooms if room.destroyed %}<div class="destroy-line">Room {{ room.id }} destroyed {{ room.destroyed|hhmmss }} &middot; {% if room.verified_absent %}verified absent {{ room.verified_absent|hhmmss }}{% else %}<strong>STILL LISTED</strong>{% endif %}</div>{% endfor %}
         {% if not clean %}<div class="small" style="margin-top:6px">The receipt is NOT CLEAN; open it to see why.</div>{% endif %}
       </div>

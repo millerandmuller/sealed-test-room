@@ -503,6 +503,7 @@
                 "yes",
                 "no",
                 "timeout",
+                "shutdown",
                 "automatic"
               ]
             },
@@ -521,6 +522,7 @@
               "enum": [
                 "person",
                 "timeout",
+                "shutdown",
                 "automatic"
               ]
             },

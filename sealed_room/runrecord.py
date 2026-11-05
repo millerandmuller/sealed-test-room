@@ -157,7 +157,7 @@ def reconcile_stale_runs(runs_dir: Path) -> list[str]:
             # One unreadable record must not stop the service from starting or the others from being reconciled.
             path.rename(path.with_suffix(".json.corrupt"))
             continue
-        data.update(status="aborted", finished=now_iso(),
+        data.update(status="aborted", awaiting=None, finished=now_iso(),
                     error="The service stopped during this run. Its rooms were removed at the next start.")
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2))

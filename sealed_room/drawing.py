@@ -49,12 +49,17 @@ def picture(record: dict) -> dict:
     if calls:
         facts.append(f"Calls through the door: {len(calls)}.")
 
+    allowed_host = (record.get("network") or {}).get("allowed_host")
+    removed = [r for r in (sealed, download) if r and r.get("destroyed")]
     return {
+        "all_gone": bool(removed) and all(r.get("verified_absent") for r in removed) and not any(not r.get("destroyed") for r in (sealed, download) if r),
         "with_you": bool(study),                                     # the original stays with the person
         "sealed": sealed_state,
         "download": download_state,
-        "walls": [{"host": w["host"], "verdict": w["verdict"]} for w in record.get("wall_check") or []],
-        "copy_in_room": bool(inputs) and sealed_state == "open",     # the copy sits in the room only while the room exists
+        # A leak is a reachable host that is not the one door; the drawing must say so instead of drawing a second door.
+        "walls": [{"host": w["host"], "verdict": w["verdict"],
+                   "leak": w["verdict"] == "ALLOWED" and w["host"] != allowed_host} for w in record.get("wall_check") or []],
+        "copy_in_room": bool(inputs) and sealed_state in ("open", "unverified"),  # the copy is there until the room is proven gone
         "results_out": bool(outputs),
         "door_calls": len(calls),
         "facts": facts,

@@ -124,3 +124,4 @@ svg.art .vanish.settled, svg.art .download.vanish { opacity: 0; }
 @media (prefers-reduced-motion: reduce) { svg.art * { animation: none !important; } }
 svg.art .unverified .room-wall { stroke: var(--red); }
 svg.art text.warn { fill: var(--red); font-size: 12px; font-weight: 700; }
+svg.art .probe.leak { stroke: var(--red); stroke-width: 6; }
