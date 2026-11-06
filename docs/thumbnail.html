@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sealed Test Room: thumbnail</title>
+<!-- Source for docs/thumbnail.png (1600 x 900). The drawing is the product's own screen-3 markup and the rows are the wall-check rows
+     of a real recorded run (2d3d, Vultr VX1, 2026-11-05); nothing here is a mock-up. The study data in that run is synthetic and says so. -->
+<style>
+:root {
+  --paper: #fbfaf7;
+  --ink: #1c1c1c;
+  --muted: #6a6f75;
+  --rule: #dcd9d1;
+  --accent: #4d5f70;
+  --red: #b3261e;
+  --red-bg: #fbeceb;
+  --green: #1b6e3c;
+  --green-bg: #e9f4ed;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 16px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+main { max-width: 1040px; margin: 0 auto; padding: 24px 24px 64px; }
+header.site { border-bottom: 1px solid var(--rule); padding: 14px 24px; }
+header.site a { color: var(--ink); text-decoration: none; font-weight: 600; letter-spacing: .02em; }
+h1 { font-size: 26px; margin: 8px 0 4px; }
+h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); margin: 28px 0 8px; }
+p.lede { color: var(--muted); margin-top: 0; }
+.mono, code, pre, td.mono { font-family: var(--mono); font-size: 13px; }
+.box { border: 1px solid var(--rule); background: #fff; padding: 14px 16px; border-radius: 4px; }
+.box h2 { margin-top: 0; }
+.badge {
+  display: inline-block; font: 600 12px/1 var(--mono); padding: 5px 8px; border-radius: 3px;
+  background: #ecebe6; color: var(--accent); letter-spacing: .03em;
+}
+.badge.synthetic { background: #fff4d6; color: #7a5a00; }
+.badge.sealed { background: #e6ecf2; color: #2f4256; }
+.badge.ok { background: var(--green-bg); color: var(--green); }
+.badge.bad { background: var(--red-bg); color: var(--red); }
+label { display: block; font-weight: 600; margin: 14px 0 4px; }
+input[type=text], input[type=file] { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 3px; font: inherit; background: #fff; }
+.choice { font-weight: 400; display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+button.primary {
+  margin-top: 20px; background: var(--ink); color: var(--paper); border: 0; border-radius: 3px;
+  padding: 11px 20px; font: 600 16px inherit; cursor: pointer;
+}
+button.primary:hover { background: #000; }
+.banner { padding: 12px 14px; border-radius: 3px; margin: 14px 0; border: 1px solid; }
+.banner.bad { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+.banner.ok { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+td.verdict { font: 700 13px var(--mono); white-space: nowrap; }
+td.verdict.BLOCKED { color: var(--red); }
+td.verdict.ALLOWED { color: var(--green); }
+tr.row-BLOCKED td:first-child { border-left: 4px solid var(--red); }
+tr.row-ALLOWED td:first-child { border-left: 4px solid var(--green); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+ul.steps { list-style: none; margin: 0; padding: 0; }
+ul.steps li { padding: 4px 0; border-bottom: 1px dotted var(--rule); font-size: 14px; }
+ul.steps li .t { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-right: 8px; }
+.destroy-line { font-family: var(--mono); font-size: 13px; margin: 4px 0; }
+.hash { word-break: break-all; }
+pre.code { background: #f4f2ec; border: 1px solid var(--rule); padding: 12px; overflow-x: auto; white-space: pre; }
+.small { font-size: 13px; color: var(--muted); }
+.honesty li { margin: 4px 0; }
+a.btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--ink); border-radius: 3px; color: var(--ink); text-decoration: none; margin-right: 8px; }
+.spinner { color: var(--muted); font-size: 14px; }
+
+@media print {
+  header.site, .noprint, details > summary { display: none; }
+  body { background: #fff; font-size: 11pt; }
+  main { max-width: none; padding: 0; }
+  details:not([open]) > * { display: none; }
+  .box { break-inside: avoid; }
+  pre.code { font-size: 8.5pt; }
+  @page { size: A4; margin: 14mm; }
+}
+
+/* ---- guided flow (F18) ---- */
+ol.steps7 { list-style: none; display: flex; gap: 4px; padding: 0; margin: 4px 0 18px; flex-wrap: wrap; }
+ol.steps7 li { flex: 1 1 0; min-width: 78px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+  border-top: 3px solid var(--rule); padding-top: 6px; transition: color .4s, border-color .4s; }
+ol.steps7 li span { font-family: var(--mono); margin-right: 4px; }
+ol.steps7 li.done { color: var(--green); border-color: var(--green); }
+ol.steps7 li.now { color: var(--ink); border-color: var(--ink); font-weight: 700; }
+.headrow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+a.audit { font-size: 13px; color: var(--accent); border: 1px solid var(--rule); background: #fff; padding: 5px 10px; border-radius: 3px; text-decoration: none; white-space: nowrap; }
+a.audit:hover { border-color: var(--accent); }
+dl { margin: 0; } dt { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 10px; }
+dd { margin: 2px 0 0; }
+.toolcard { margin-bottom: 14px; }
+table.preview td, table.preview th { font-size: 13px; }
+.gate { border: 2px solid var(--ink); background: #fff; padding: 16px 18px; border-radius: 4px; margin: 16px 0; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0 0; }
+.actions button.primary { margin-top: 0; }
+button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--ink); border-radius: 3px; padding: 11px 20px; font: 600 16px inherit; cursor: pointer; }
+button.secondary:hover { background: #f1efe9; }
+a.primary-link { background: var(--ink); color: var(--paper); font-weight: 600; }
+.banner.calm { background: #eef1f4; color: var(--ink); border-color: var(--accent); }
+tr.ref td { background: #f7f6f1; }
+.where { margin: 10px 0; }
+
+/* the picture: color, the file icon's position, and the box disappearing; nothing else moves */
+svg.art { width: 100%; max-width: 560px; max-height: 34vh; height: auto; display: block; margin: 8px 0 14px; }
+svg.art text { font-family: var(--mono); fill: var(--ink); }
+svg.art .cap { font-size: 13px; font-weight: 700; fill: var(--accent); }
+svg.art .lbl { font-size: 11px; fill: var(--muted); }
+svg.art .lbl.bad { fill: var(--red); }
+svg.art .xmark { font-size: 16px; fill: var(--red); }
+svg.art .host { fill: #fff; stroke: var(--rule); stroke-width: 2; }
+svg.art .room-wall { fill: #fff; stroke: var(--ink); stroke-width: 5; }
+svg.art .dl-wall { fill: #fff; stroke: var(--muted); stroke-width: 2; stroke-dasharray: 6 4; }
+svg.art .room-door { fill: var(--red-bg); stroke: var(--muted); stroke-width: 2; transition: fill .6s; }
+svg.art .room-door.open { fill: var(--green-bg); stroke: var(--green); }
+svg.art .endpoint { fill: var(--green-bg); stroke: var(--green); stroke-width: 2; }
+svg.art .probe { stroke-width: 3; stroke-dasharray: 8 5; }
+svg.art .probe.blocked { stroke: var(--red); }
+svg.art .probe.allowed { stroke: var(--green); }
+svg.art .file-room { animation: file-in 1s ease-out; }
+svg.art .file-result { animation: file-out 1s ease-out; }
+svg.art .vanish.fresh { animation: vanish .9s ease-in forwards; }
+svg.art .vanish.settled, svg.art .download.vanish { opacity: 0; }
+@keyframes file-in { from { transform: translate(64px, 96px); opacity: .3; } to { transform: translate(416px, 130px); opacity: 1; } }
+@keyframes file-out { from { transform: translate(416px, 130px); opacity: .3; } to { transform: translate(64px, 176px); opacity: 1; } }
+@keyframes vanish { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { svg.art * { animation: none !important; } }
+svg.art .unverified .room-wall { stroke: var(--red); }
+svg.art text.warn { fill: var(--red); font-size: 12px; font-weight: 700; }
+svg.art .probe.leak { stroke: var(--red); stroke-width: 6; }
+
+/* keep the decision and the results above the fold on a laptop */
+div[data-screen] { display: flex; flex-direction: column; }
+div[data-screen] > [data-slot="head"] { order: 0; }
+div[data-screen] > [data-slot="art"] { order: 1; }
+div[data-screen] > [data-slot="main"] { order: 2; }
+div[data-screen] > [data-slot="log"] { order: 3; }
+div[data-screen="5"] > [data-slot="main"] { order: 1; }
+div[data-screen="5"] > [data-slot="art"] { order: 2; }
+
+/* on a short window the question comes before the table, so the buttons stay in view */
+div[data-screen="3"] > [data-slot="main"] { display: flex; flex-direction: column; }
+div[data-screen="3"] > [data-slot="main"] .gate { order: -1; }
+
+html,body{margin:0;width:1600px;height:900px;overflow:hidden}
+body{padding:56px 80px;display:flex;flex-direction:column;justify-content:space-between}
+.top{display:flex;justify-content:space-between;align-items:center}
+.brand{font-weight:700;letter-spacing:.03em;font-size:30px}
+.badge.synthetic{font-size:22px;padding:6px 16px}
+h1.tag{font-size:64px;line-height:1.1;margin:0;letter-spacing:-.01em}
+.stage{display:flex;gap:40px;align-items:center}
+svg.art{max-width:none;max-height:none;width:900px;margin:0}
+
+table.wall{border-collapse:collapse;width:560px;font-size:22px;background:#fff;border:1px solid var(--rule)}
+table.wall td{padding:16px 18px;border-bottom:1px solid var(--rule)}
+table.wall .host{font-size:25px;font-weight:600}
+.det{font-size:19px;color:var(--muted);margin-top:4px;font-family:var(--mono)}
+.verd{font-weight:800;font-size:26px;letter-spacing:.05em;text-align:right}
+.verd.BLOCKED{color:var(--red)} .verd.ALLOWED{color:var(--green)}
+.foot{color:var(--muted);font-size:23px}
+</style></head>
+<body>
+<div class="top"><div class="brand">Sealed Test Room</div><span class="badge synthetic">Synthetic study data</span></div>
+<h1 class="tag">A new tool, your study data, one door.</h1>
+<div class="stage"><svg viewBox="0 0 760 290" role="img" class="art"
+     aria-label="Sealed room drawing. Received from you: study_synthetic.csv, 12 compounds, sha256 3908ff24d30a... Sealed room sr-2d3d created 18:08:55.">
+  
+  
+    <rect x="8" y="40" width="150" height="210" rx="6" class="host"/>
+    <text x="83" y="62" text-anchor="middle" class="cap">With you</text>
+    
+  <g class="file file-host" transform="translate(64,96)">
+    <path d="M0 0h26l12 12v34H0z" fill="#fff" stroke="#1c1c1c" stroke-width="2"/><path d="M26 0v12h12" fill="none" stroke="#1c1c1c" stroke-width="2"/>
+    <path d="M7 24h24M7 31h24M7 38h16" stroke="#6a6f75" stroke-width="2"/>
+    <text x="19" y="62" text-anchor="middle" class="lbl">your file</text>
+  </g>
+
+    
+  
+
+  
+  
+    <g  class="sealed  settled">
+      <rect x="300" y="30" width="270" height="230" rx="4" class="room-wall"/>
+      <rect x="564" y="124" width="12" height="52" class="room-door open"/>
+      <text x="435" y="52" text-anchor="middle" class="cap">Sealed room</text>
+      
+      <text x="580" y="116" text-anchor="start" class="lbl">the one door</text>
+      
+      
+      
+        
+          
+          <line x1="330" y1="78" x2="566" y2="78" class="probe blocked"/>
+          <text x="566" y="83" class="xmark" text-anchor="middle">&#10005;</text>
+          <text x="590" y="82" class="lbl bad">pypi.org refused</text>
+        
+      
+        
+          
+          <line x1="330" y1="222" x2="566" y2="222" class="probe blocked"/>
+          <text x="566" y="227" class="xmark" text-anchor="middle">&#10005;</text>
+          <text x="590" y="226" class="lbl bad">github.com refused</text>
+        
+      
+        
+          <line x1="330" y1="150" x2="640" y2="150" class="probe allowed"/>
+        
+      
+      
+    <rect x="640" y="124" width="112" height="52" rx="4" class="endpoint"/>
+    <text x="696" y="146" text-anchor="middle" class="lbl">Vultr inference</text>
+    <text x="696" y="162" text-anchor="middle" class="lbl small">answers</text>
+    </g>
+  
+
+  
+  
+</svg><table class="wall"><tbody><tr class="row-BLOCKED"><td><div class="mono host">pypi.org</div><div class="det">Connection refused · 30 ms</div></td><td class="verd BLOCKED">BLOCKED</td></tr><tr class="row-BLOCKED"><td><div class="mono host">github.com</div><div class="det">Connection refused · 0 ms</div></td><td class="verd BLOCKED">BLOCKED</td></tr><tr class="row-ALLOWED"><td><div class="mono host">api.vultrinference.com</div><div class="det">http 200 · 167 ms</div></td><td class="verd ALLOWED">ALLOWED</td></tr></tbody></table></div>
+<div class="foot">A real run on a Vultr VX1 host. Both rooms destroyed and proven absent at the end.</div>
+</body></html>

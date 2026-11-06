@@ -491,6 +491,15 @@
         }
       }
     },
+    "limits": {
+      "type": "object",
+      "description": "The time limits that applied to this run, in seconds.",
+      "properties": {
+        "whole_run_s": {"type": "integer", "minimum": 1},
+        "gate_wait_s": {"type": "integer", "minimum": 1},
+        "close_wait_s": {"type": "integer", "minimum": 1}
+      }
+    },
     "decisions": {
       "type": "object",
       "description": "What the person decided during the run, and when.",

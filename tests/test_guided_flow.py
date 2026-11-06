@@ -21,6 +21,26 @@ from tests.conftest import authed
 from tests.test_receipt_and_web import H, good_record, save
 
 
+import contextlib
+
+
+@contextlib.contextmanager
+def every_slot_taken(app, run_ids=()):
+    """Hold every sealed-room slot the way live runs would; the first slots carry the given run ids."""
+    slots = app.state.run_slots
+    held = []
+    while slots.free():
+        assert slots.acquire()
+        run_id = run_ids[len(held)] if len(held) < len(run_ids) else f"f{len(held):03x}"
+        slots.name(run_id)
+        held.append(run_id)
+    try:
+        yield
+    finally:
+        for run_id in held:
+            slots.release(run_id)
+
+
 # --- the gate and the close wait ----------------------------------------------------------------------------------
 
 @pytest.fixture
@@ -536,13 +556,10 @@ def test_automatic_close_is_said_in_words_on_screen_7_and_the_receipt(client):
 def test_busy_notice_links_to_the_run_in_progress(client):
     c, runs = client
     import sealed_room.web as web
-    c.app.state.active_run = "ab12"
-    # the notice only appears while the run lock is held; hold it the way a run would
-    lock = next(cell.cell_contents for fn in c.app.routes if getattr(fn, "name", "") == "tool_screen"
-                for cell in (fn.endpoint.__closure__ or ()) if isinstance(cell.cell_contents, type(threading.Lock())))
-    with lock:
+    # the notice only appears while every slot is taken; hold them the way live runs would
+    with every_slot_taken(c.app, ["ab12"]):
         page = c.get("/?busy=1").text
-    assert "Someone else is in the room" in page and "/runs/ab12" in page
+    assert "Every sealed room is in use" in page and "/runs/ab12" in page
     assert "banner bad" not in page and "frees in at most" in page
 
 
@@ -645,7 +662,7 @@ def test_busy_redirect_keeps_the_held_upload_and_a_started_run_removes_it(client
     held = [runs / "_staging" / f"{token}.csv", runs / "_staging" / f"{token}.json"]
     assert all(f.is_file() for f in held)
     form = {"tool": "admet-ai", "source": "upload", "token": token}
-    with c.app.state.run_lock:                                     # another run holds the single slot
+    with every_slot_taken(c.app):                                  # other runs hold every slot
         res = c.post("/runs", data=form, follow_redirects=False)
     assert res.status_code == 303 and res.headers["location"] == "/?busy=1" and all(f.is_file() for f in held)
     monkeypatch.setattr(web, "run_to_completion", lambda *a, **k: None)
@@ -747,7 +764,7 @@ def test_a_swept_held_upload_leaves_no_running_record_and_frees_the_slot(client,
     res = c.post("/runs", data={"tool": "admet-ai", "source": "upload", "token": token})
     assert res.status_code == 400 and "no longer held" in res.text
     assert not [p for p in runs.glob("*") if p.is_dir() and p.name != "_staging"], "a run directory was left behind"
-    assert not c.app.state.run_lock.locked()
+    assert c.app.state.run_slots.free() == c.app.state.run_slots.capacity
 
 
 def test_prepare_run_cleans_up_when_the_copy_fails(tmp_path, monkeypatch):
@@ -810,12 +827,10 @@ def test_busy_page_says_how_long_in_minutes_from_the_held_run(client):
     rec = good_record()
     rec.update(status="running", awaiting="close", awaiting_since=datetime.now(timezone.utc).isoformat())
     save(runs, rec)
-    c.app.state.active_run = "ab12"
-    lock = next(cell.cell_contents for fn in c.app.routes if getattr(fn, "name", "") == "tool_screen"
-                for cell in (fn.endpoint.__closure__ or ()) if isinstance(cell.cell_contents, type(threading.Lock())))
-    with lock:
+    with every_slot_taken(c.app, ["ab12"]):
         page = c.get("/?busy=1").text
-    assert "Someone else is in the room." in page and "frees in at most 5 minutes" in page and "banner bad" not in page
+    close_wait_min = load_settings().caps["close_wait_s"] // 60   # a run waiting at the close frees the room within the close wait
+    assert "Every sealed room is in use." in page and f"frees in at most {close_wait_min} minutes" in page and "banner bad" not in page
 
 
 def test_screen_four_says_the_file_goes_in_last_before_it_has_entered(client):
@@ -864,3 +879,107 @@ def test_audit_still_calls_a_destroyed_but_unproven_room_unverified(client):
     save(runs, rec)
     page = c.get("/runs/ab12/audit").text
     assert "NOT VERIFIED" in page and "Room open" not in page
+
+
+# --- shorter holds (F21): one set of limits, stated the same everywhere ----------------------------------------------
+
+def test_the_limits_in_the_it_rules_are_the_shipped_short_ones():
+    from sealed_room.runctl import CAP_DEFAULTS
+    caps = load_settings().caps
+    assert (caps["gate_wait_s"], caps["close_wait_s"], caps["whole_run_s"]) == (120, 120, 360)
+    assert caps["tool_run_s"] <= caps["whole_run_s"]                       # a single tool run can never outlast the run
+    assert {k: caps[k] for k in CAP_DEFAULTS} == CAP_DEFAULTS              # the fallbacks cannot drift from the config
+
+
+def test_a_juror_never_waits_longer_than_ten_minutes():
+    from datetime import datetime, timezone
+    from sealed_room.runctl import slot_free_within_s
+    now = datetime.now(timezone.utc)
+    gate = {"awaiting": "gate", "awaiting_since": now.isoformat(), "started": now.isoformat(), "decisions": {}}
+    assert slot_free_within_s(gate, load_settings().caps, now) <= 600      # the worst case: a yes at the last second of the gate wait
+
+
+def test_plain_duration_names_a_limit_in_whole_minutes_or_seconds():
+    from sealed_room.runctl import plain_duration
+    assert [plain_duration(s) for s in (60, 120, 360, 90, 1)] == ["1 minute", "2 minutes", "6 minutes", "90 seconds", "1 second"]
+
+
+def test_no_screen_receipt_or_readme_states_a_limit_that_differs_from_the_config(client):
+    import re
+    from pathlib import Path
+    from sealed_room.runctl import plain_duration, slot_free_within_s
+    caps = load_settings().caps
+    allowed = {plain_duration(caps[k]) for k in ("gate_wait_s", "close_wait_s", "whole_run_s")} | {"10 minutes"}
+    c, runs = client
+    gate = gated_record()
+    close = good_record(); close.update(run_id="b002", status="running", awaiting="close")
+    done = good_record(); done.update(run_id="b003", limits={k: caps[k] for k in ("gate_wait_s", "close_wait_s", "whole_run_s")})
+    for rec in (gate, close, done):
+        save(runs, rec)
+    pages = [c.get("/").text, c.get("/runs/ab12").text, c.get("/runs/b002?step=6").text, c.get("/runs/b003/receipt").text,
+             (Path(__file__).resolve().parents[1] / "README.md").read_text()]
+    found = {m.group(0) for page in pages for m in re.finditer(r"\b\d+ (?:minutes?|seconds?)\b", re.sub(r"<[^>]+>", " ", page))}
+    assert found and found <= allowed, found - allowed
+    for number in ("2 minutes", "6 minutes"):
+        assert number in " ".join(pages)                                    # the new numbers really are shown
+    assert "5 minutes" not in " ".join(pages) and "15 minutes" not in " ".join(pages)
+
+
+def test_receipt_carries_the_limits_that_applied_and_still_validates(client):
+    c, runs = client
+    caps = load_settings().caps
+    rec = good_record(); rec.update(limits={k: caps[k] for k in ("gate_wait_s", "close_wait_s", "whole_run_s")})
+    save(runs, rec)
+    page = c.get("/runs/ab12/receipt").text
+    assert "Limits that applied to this run: working time 6 minutes" in page and "2 minutes at the gate and 2 minutes at the close" in page
+    assert validate_receipt(build_receipt(rec)) == []
+
+
+def test_execute_run_records_the_limits_it_ran_under(guided, runner):
+    calls, request, record, msb, control = guided
+    thread = run_in_thread(request, record, msb)
+    wait_for(record, "gate")
+    control.answer_gate(False)
+    thread.join(5)
+    caps = load_settings().caps
+    assert record.snapshot()["limits"] == {"gate_wait_s": caps["gate_wait_s"], "close_wait_s": caps["close_wait_s"], "whole_run_s": caps["whole_run_s"]}
+
+
+# --- two sealed rooms at once (F21, measured on the host: two runs at 2048 MB each, both clean) -----------------------
+
+def test_the_config_allows_two_runs_and_two_gb_rooms():
+    settings = load_settings()
+    assert settings.caps["concurrent_runs"] == 2 and settings.room["memory_mb"] == 2048
+
+
+def test_slots_admit_up_to_capacity_then_refuse_at_once_and_free_on_release():
+    from sealed_room.runctl import RunSlots
+    slots = RunSlots(2)
+    assert slots.acquire() and slots.acquire() and not slots.acquire()
+    assert slots.locked() and slots.free() == 0
+    slots.name("aaaa"); slots.name("bbbb")
+    assert slots.active == ["aaaa", "bbbb"]
+    slots.release("aaaa")
+    assert not slots.locked() and slots.free() == 1 and slots.active == ["bbbb"]
+    slots.release("bbbb"); slots.release()                                   # a release with nothing held changes nothing
+    assert slots.free() == 2 and RunSlots(0).capacity == 1                  # never fewer than one slot
+
+
+def test_two_runs_start_at_once_the_third_is_told_to_wait_and_a_finished_run_frees_a_slot(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    gate, started = threading.Event(), []
+    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record: (started.append(request.run_id), gate.wait(5)))
+    first = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
+    second = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
+    third = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
+    assert first.headers["location"].startswith("/runs/") and second.headers["location"].startswith("/runs/")
+    assert first.headers["location"] != second.headers["location"]
+    assert third.headers["location"] == "/?busy=1" and c.app.state.run_slots.free() == 0
+    assert "Every sealed room is in use" in c.get("/?busy=1").text
+    gate.set()
+    for thread in threading.enumerate():
+        if thread.name.startswith("run-"):
+            thread.join(5)
+    assert c.app.state.run_slots.free() == 2
+    assert c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"].startswith("/runs/")

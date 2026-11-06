@@ -53,6 +53,7 @@ class RunRecord:
             "study": None,       # what was received from the person, before any room: name, hash, rows, columns
             "awaiting_since": None,  # when the current wait for the person began (used to say how long a held slot can last)
             "awaiting": None,    # "gate" (send the file in?) or "close" (close the room?) while a person is being waited for
+            "limits": {},        # the caps that applied to this run (seconds): working time, wait at the gate, wait at the close
             "decisions": {},     # send_file / close_room / attached: who decided what, and when
             "notes": [],
             "honesty": [],

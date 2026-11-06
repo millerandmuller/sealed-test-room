@@ -1,4 +1,4 @@
-"""Web layer: server-rendered pages, a polled timeline fragment, one run at a time. No logic beyond routing."""
+"""Web layer: server-rendered pages, a polled timeline fragment, a few runs at once (the host's measured room count). No logic beyond routing."""
 from __future__ import annotations
 
 import fcntl
@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import APPROVED_TOOL_LABEL, TOOL_CARD, Settings, load_settings
 from .drawing import picture, screen_for
-from .runctl import ControlRegistry, RunControl, slot_free_within_s
+from .runctl import ControlRegistry, RunControl, RunSlots, plain_duration, slot_free_within_s
 from .failure_words import plain_failure
 from .intake import MAX_BYTES, IntakeError, preview_study, validate_study
 from .msb import Msb
@@ -104,9 +104,9 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
     app = FastAPI(title="Sealed Test Room", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.filters.update(plain_failure=plain_failure, hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since, seconds_since=seconds_since)
+    templates.env.filters.update(plain_failure=plain_failure, hhmmss=hhmmss, step_line=step_line, stamp=stamp, minutes_since=minutes_since, seconds_since=seconds_since, plain_duration=plain_duration)
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
-    run_lock = threading.Lock()
+    run_slots = RunSlots(settings.caps.get("concurrent_runs", 1))  # sealed rooms the host has memory for at once; a full house says so
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
     # Startup cleanup deletes every room and marks "running" records aborted, so only the one process that owns
     # the service lock may do it: a second process (a script, a test, a second worker) must not touch live work.
@@ -133,8 +133,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
     attach_lock = threading.Lock()
     app.state.controls = controls
-    app.state.active_run = None
-    app.state.run_lock = run_lock
+    app.state.run_slots = run_slots
 
     def tool_context(error: str | None = None) -> dict:
         return {"rules": settings.rules, "error": error, "approved_tool": APPROVED_TOOL_LABEL, "card": TOOL_CARD}
@@ -168,10 +167,11 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         if not authorized(request):
             return access_page(request)
         # Only say the room is taken while a run really holds the lock (a stale bookmark must not claim it).
-        taken = bool(busy) and run_lock.locked()
+        taken = bool(busy) and run_slots.locked()
         context = tool_context()
-        context["active_run"] = app.state.active_run if taken else None
-        context["busy_minutes"] = slot_minutes(app.state.active_run) if taken else 0
+        soonest = min(run_slots.active, key=slot_minutes, default=None) if taken else None  # the run whose slot frees first
+        context["active_run"] = soonest
+        context["busy_minutes"] = slot_minutes(soonest) if taken else 0
         return templates.TemplateResponse(request, "tool.html", context)
 
     @app.post("/data", response_class=HTMLResponse)
@@ -243,22 +243,24 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             if token:
                 (settings.runs_dir / "_staging" / f"{token}.json").unlink(missing_ok=True)
             return templates.TemplateResponse(request, "data.html", data_context(str(exc)), status_code=400)
-        if not run_lock.acquire(blocking=False):
+        if not run_slots.acquire(blocking=False):
             if not token:
                 _discard(staged)  # a held (previewed) upload stays held so the person can try again
             # Redirect instead of rendering at /runs, so a browser refresh cannot submit the form again.
             return RedirectResponse("/?busy=1", status_code=303)
+        run_id = None
         try:
             control = RunControl()
             try:
                 run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic, control)
             except FileNotFoundError:  # the held upload was swept between the preview and the confirm
-                run_lock.release()
+                run_slots.release()
                 return templates.TemplateResponse(request, "data.html", data_context("That file is no longer held. Choose it again."), status_code=400)
-            controls.add(run_request.run_id, control)
-            app.state.active_run = run_request.run_id
+            run_id = run_request.run_id
+            run_slots.name(run_id)
+            controls.add(run_id, control)
         except Exception:
-            run_lock.release()
+            run_slots.release(run_id)
             raise
         finally:
             _discard(staged)  # the run keeps its own private copy
@@ -270,8 +272,7 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
                 run_to_completion(settings, run_request, record)
             finally:
                 controls.drop(run_request.run_id)
-                app.state.active_run = None
-                run_lock.release()
+                run_slots.release(run_request.run_id)
 
         threading.Thread(target=work, name=f"run-{run_request.run_id}", daemon=False).start()
         return RedirectResponse(f"/runs/{run_request.run_id}", status_code=303)

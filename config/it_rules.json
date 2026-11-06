@@ -9,13 +9,14 @@
   "room": {
     "image": "python:3.12",
     "cpus": 2,
-    "memory_mb": 4096
+    "memory_mb": 2048
   },
   "caps": {
-    "tool_run_s": 600,
-    "whole_run_s": 900,
+    "tool_run_s": 300,
+    "whole_run_s": 360,
     "max_agent_steps": 25,
-    "gate_wait_s": 300,
-    "close_wait_s": 300
+    "gate_wait_s": 120,
+    "close_wait_s": 120,
+    "concurrent_runs": 2
   }
 }

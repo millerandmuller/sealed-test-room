@@ -8,6 +8,18 @@ from __future__ import annotations
 import threading
 from datetime import datetime
 
+# Fallback only: config/it_rules.json is the source of truth and always carries these keys (a test keeps them equal).
+CAP_DEFAULTS = {"gate_wait_s": 120, "close_wait_s": 120, "whole_run_s": 360}
+
+
+def plain_duration(seconds: float) -> str:
+    """'2 minutes', '1 minute', '90 seconds': the one way every screen, receipt and message names a limit."""
+    s = int(round(seconds))
+    if s % 60 == 0 and s >= 60:
+        n = s // 60
+        return f"{n} minute{'' if n == 1 else 's'}"
+    return f"{s} second{'' if s == 1 else 's'}"
+
 
 class RunControl:
     def __init__(self) -> None:
@@ -55,6 +67,61 @@ class RunControl:
         self._close_event.set()
 
 
+class RunSlots:
+    """How many runs may hold a sealed room at once (the host has memory for a measured number; see the README's limits).
+
+    `acquire` never waits: a full house answers False at once so the page can say so. The lock protocol is the one a
+    threading.Lock has (`acquire`, `release`, `locked`, context manager), with `locked()` meaning "every slot is taken".
+    """
+
+    def __init__(self, capacity: int) -> None:
+        self.capacity = max(1, int(capacity))
+        self._lock = threading.Lock()
+        self._active: list[str] = []          # run ids holding a slot, oldest first
+        self._unnamed = 0                     # holders that have not been given a run id yet
+
+    def acquire(self, blocking: bool = False) -> bool:
+        with self._lock:
+            if len(self._active) + self._unnamed >= self.capacity:
+                return False
+            self._unnamed += 1
+            return True
+
+    def name(self, run_id: str) -> None:
+        """The run that just took a slot says who it is, so a full house can point at the runs in it."""
+        with self._lock:
+            if self._unnamed:
+                self._unnamed -= 1
+                self._active.append(run_id)
+
+    def release(self, run_id: str | None = None) -> None:
+        with self._lock:
+            if run_id in self._active:
+                self._active.remove(run_id)
+            elif self._unnamed:
+                self._unnamed -= 1
+
+    def free(self) -> int:
+        with self._lock:
+            return self.capacity - len(self._active) - self._unnamed
+
+    def locked(self) -> bool:
+        with self._lock:
+            return len(self._active) + self._unnamed >= self.capacity
+
+    @property
+    def active(self) -> list[str]:
+        with self._lock:
+            return list(self._active)
+
+    def __enter__(self) -> "RunSlots":
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+
 class ControlRegistry:
     """One RunControl per live run id. Only the web process holds it."""
 
@@ -88,7 +155,7 @@ def slot_free_within_s(record: dict, caps: dict, now: datetime) -> int:
     Working: what is left of the run cap (time spent waiting at the gate does not count against it), then the close wait.
     At the close step: the rest of the close wait.
     """
-    gate_wait, close_wait, run_cap = (int(caps.get(k, d)) for k, d in (("gate_wait_s", 300), ("close_wait_s", 300), ("whole_run_s", 900)))
+    gate_wait, close_wait, run_cap = (int(caps.get(k, CAP_DEFAULTS[k])) for k in ("gate_wait_s", "close_wait_s", "whole_run_s"))
 
     def seconds_between(a: str | None, b: datetime) -> float:
         return max(0.0, (b - datetime.fromisoformat(a)).total_seconds()) if a else 0.0

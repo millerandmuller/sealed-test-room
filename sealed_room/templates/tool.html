@@ -4,7 +4,7 @@
 <h1>Choose the tool</h1>
 <p class="lede">A new tool, your study data, one door. You decide at every step; the agent does the work.</p>
 
-{% if busy_minutes %}<div class="banner calm"><strong>Someone else is in the room.</strong> It frees in at most {{ busy_minutes }} minute{{ "" if busy_minutes == 1 else "s" }}.{% if active_run %} <a href="/runs/{{ active_run }}">Look at that run</a>.{% endif %}</div>
+{% if busy_minutes %}<div class="banner calm"><strong>Every sealed room is in use.</strong> One frees in at most {{ busy_minutes }} minute{{ "" if busy_minutes == 1 else "s" }}.{% if active_run %} <a href="/runs/{{ active_run }}">Look at that run</a>.{% endif %}</div>
 {% elif error %}<div class="banner bad">{{ error }}</div>{% endif %}
 
 <div class="box toolcard">
@@ -20,7 +20,7 @@
 <div class="box">
   <h2>Rules set by IT</h2>
   <p style="margin:0">Allowed from inside the room: <span class="mono">{{ rules.allowed_host }}:{{ rules.allowed_port }}</span> &middot; Everything else: denied</p>
-  <p class="small" style="margin:6px 0 0">Room size: {{ rules.room.cpus }} CPUs, {{ rules.room.memory_mb }} MB &middot; run cap {{ (rules.caps.whole_run_s / 60)|int }} minutes</p>
+  <p class="small" style="margin:6px 0 0">Room size: {{ rules.room.cpus }} CPUs, {{ rules.room.memory_mb }} MB &middot; run cap {{ rules.caps.whole_run_s|plain_duration }}</p>
 </div>
 
 <form method="post" action="/data">

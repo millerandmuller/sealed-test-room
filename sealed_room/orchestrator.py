@@ -20,7 +20,7 @@ from .inference import Inference
 from .intake import normalized_header, validate_study
 from .msb import Msb
 from .rooms import Room, RoomManager
-from .runctl import RunControl
+from .runctl import CAP_DEFAULTS, RunControl, plain_duration
 from .runrecord import RunRecord, now_iso
 from .toolinstall import ToolInstallError, fetch_wheels, install_offline, resolve_tool
 from .wallcheck import WallCheckFailed, evaluate, pins_for, resolve_ipv4, run_wall_check
@@ -56,6 +56,7 @@ def execute_run(
     deadline = time.monotonic() + settings.caps["whole_run_s"]
     rooms = RoomManager(msb, record, settings.room["image"], settings.room["cpus"], settings.room["memory_mb"])
     record.update_model(base_url=settings.inference_base_url, name=settings.model_primary)
+    record.update(limits={k: int(settings.caps.get(k, CAP_DEFAULTS[k])) for k in CAP_DEFAULTS})  # what applied to this run, for the receipt
     status, error = "completed", None
     try:
         _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline)
@@ -150,7 +151,7 @@ def _gate(control: RunControl | None, record: RunRecord, settings: Settings) -> 
     if control is None:
         record.set_decision("send_file", {"answer": "automatic", "at": now_iso()})
         return 0.0
-    wait_s = int(settings.caps.get("gate_wait_s", 300))
+    wait_s = int(settings.caps.get("gate_wait_s", CAP_DEFAULTS["gate_wait_s"]))
     asked = now_iso()
     record.update(awaiting="gate", awaiting_since=now_iso())
     _phase(record, "gate", "Walls tested. Waiting for you to decide whether your file goes in.")
@@ -162,7 +163,7 @@ def _gate(control: RunControl | None, record: RunRecord, settings: Settings) -> 
         _phase(record, "gate", "You chose to send the file in.")
         return time.monotonic() - started
     why = {"no": "You chose not to send the file in.",
-           "shutdown": "The service stopped while waiting for you, treated as no."}.get(answer, f"No answer within {wait_s // 60} minutes, treated as no.")
+           "shutdown": "The service stopped while waiting for you, treated as no."}.get(answer, f"No answer within {plain_duration(wait_s)}, treated as no.")
     raise RunDeclined(f"{why} The room is destroyed; nothing entered it.")
 
 
@@ -171,14 +172,14 @@ def _wait_for_close(control: RunControl | None, record: RunRecord, settings: Set
     if control is None:
         record.set_decision("close_room", {"by": "automatic", "at": now_iso()})
         return "closed automatically"
-    wait_s = int(settings.caps.get("close_wait_s", 300))
+    wait_s = int(settings.caps.get("close_wait_s", CAP_DEFAULTS["close_wait_s"]))
     record.update(awaiting="close", awaiting_since=now_iso())
     _phase(record, "close", "Results are in. The room stays open until you close it.")
     by = control.wait_close(wait_s)
     record.update(awaiting=None)
     record.set_decision("close_room", {"by": by, "at": now_iso()})
     if by == "timeout":
-        record.add_note(f"Nobody closed the room within {wait_s // 60} minutes, so it was closed automatically.")
+        record.add_note(f"Nobody closed the room within {plain_duration(wait_s)}, so it was closed automatically.")
     elif by == "shutdown":
         record.add_note("The service was stopping, so the room was closed without waiting for you.")
     return {"person": "closed by you", "timeout": "closed automatically after no answer"}.get(by, "closed automatically when the service stopped")

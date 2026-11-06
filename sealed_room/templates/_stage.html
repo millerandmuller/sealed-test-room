@@ -53,7 +53,7 @@
           <button class="primary" name="answer" value="yes" type="submit">Yes, send my file in</button>
           <button class="secondary" name="answer" value="no" type="submit">No, destroy the room</button>
         </form>
-        <p class="small" style="margin:8px 0 0">No answer within {{ (rules.caps.gate_wait_s|default(300) / 60)|int }} minutes counts as no.</p>
+        <p class="small" style="margin:8px 0 0">No answer within {{ rules.caps.gate_wait_s|plain_duration }} counts as no.</p>
       </div>
     {% endif %}
 
@@ -93,7 +93,7 @@
         <button class="primary" type="submit">Close the room</button>
         <a class="btn" href="/runs/{{ r.run_id }}">Back to the results</a>
       </form>
-      <p class="small" style="margin:8px 0 0">If nobody presses it within {{ (rules.caps.close_wait_s|default(300) / 60)|int }} minutes, the room is closed automatically and the receipt says so.</p>
+      <p class="small" style="margin:8px 0 0">If nobody presses it within {{ rules.caps.close_wait_s|plain_duration }}, the room is closed automatically and the receipt says so.</p>
     </div>
 
   {# ---------------- screen 7: room gone, attach the receipt ---------------- #}

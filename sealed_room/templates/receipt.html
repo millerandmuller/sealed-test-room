@@ -39,6 +39,8 @@
 </table>
 {% endif %}
 
+{% if x.limits %}<p class="small">Limits that applied to this run: working time {{ x.limits.whole_run_s|plain_duration }}; a wait for your answer ends after {{ x.limits.gate_wait_s|plain_duration }} at the gate and {{ x.limits.close_wait_s|plain_duration }} at the close.</p>{% endif %}
+
 <h2>Network policy and wall check</h2>
 <div class="box">
   <p style="margin:0">Allowed from inside the sealed room:
