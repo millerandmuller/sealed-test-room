@@ -141,7 +141,7 @@ def run_agent(infer: Inference, session: SealedSession, spec: str, version: str,
             outcome.error = "run time cap reached"
             break
         outcome.steps_used = step
-        message, model = infer.chat(messages, TOOLS)
+        message, model = infer.chat(messages, TOOLS, deadline)
         session.record.update_model(name=model)
         content = (message.content or "").strip()
         calls = message.tool_calls or []

@@ -54,6 +54,15 @@ def policy_string(args: list[str]) -> str:
 DOWNLOAD_MEMORY_MB = 1024
 
 
+def _own_listing(text: str, room_id: str) -> str:
+    """The `msb list` header and this room's own line, if any: with two runs at once the listing also names the other run's rooms."""
+    lines = text.splitlines()
+    kept = [ln for i, ln in enumerate(lines) if (i == 0 and ln.strip().startswith("NAME")) or room_id in ln]
+    if not any(room_id in ln for ln in kept):
+        kept.append(f"(no line for {room_id})")
+    return "\n".join(kept) if lines else text
+
+
 class RoomManager:
     def __init__(self, msb: Msb, record: RunRecord, image: str, cpus: int, memory_mb: int):
         self._msb = msb
@@ -91,7 +100,7 @@ class RoomManager:
             destroyed=destroyed,
             verified_absent=verified if absent else None,
             destroy_check={"command": check, "rm_exit": removed.code,
-                           "list_output": clip(listing.stdout or listing.stderr, 300), "absent": absent},
+                           "list_output": clip(_own_listing(listing.stdout or listing.stderr, room.id), 300), "absent": absent},
         )
         room.open = False
         if not absent:

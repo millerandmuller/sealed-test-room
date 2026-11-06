@@ -154,6 +154,9 @@ def slot_free_within_s(record: dict, caps: dict, now: datetime) -> int:
     At the gate: the rest of the gate wait, then the whole run if the answer is yes, then the close wait.
     Working: what is left of the run cap (time spent waiting at the gate does not count against it), then the close wait.
     At the close step: the rest of the close wait.
+    Before the gate (room opening, walls being tested): the whole gate wait is still ahead, so it is added too.
+    The bound assumes every step honours the run cap; a host command that hangs can exceed it (the model calls and the
+    exec steps are cut at the cap; copies and room removal are not).
     """
     gate_wait, close_wait, run_cap = (int(caps.get(k, CAP_DEFAULTS[k])) for k in ("gate_wait_s", "close_wait_s", "whole_run_s"))
 
@@ -169,4 +172,5 @@ def slot_free_within_s(record: dict, caps: dict, now: datetime) -> int:
     if record.get("awaiting") == "gate":
         return int(max(0.0, gate_wait - seconds_between(record.get("awaiting_since"), now)) + run_cap + close_wait)
     worked = seconds_between(record.get("started"), now) - waited_at_gate
-    return int(max(0.0, run_cap - worked) + close_wait)
+    before_the_gate = 0 if send.get("asked") else gate_wait                  # the gate wait is still ahead: room opening, walls being tested
+    return int(before_the_gate + max(0.0, run_cap - worked) + close_wait)

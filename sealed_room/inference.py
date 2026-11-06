@@ -4,6 +4,7 @@ Reasoning models spend max_tokens on reasoning first, so the cap here is generou
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from openai import OpenAI
@@ -11,6 +12,7 @@ from openai import OpenAI
 from .config import Settings
 
 MAX_TOKENS = 2000
+CALL_TIMEOUT_S = 60.0
 
 
 class InferenceError(RuntimeError):
@@ -20,7 +22,7 @@ class InferenceError(RuntimeError):
 def make_client(settings: Settings) -> OpenAI:
     if not settings.inference_api_key:
         raise InferenceError("VULTR_INFERENCE_API_KEY is not set on this host")
-    return OpenAI(base_url=settings.inference_base_url, api_key=settings.inference_api_key, timeout=60, max_retries=0)
+    return OpenAI(base_url=settings.inference_base_url, api_key=settings.inference_api_key, timeout=CALL_TIMEOUT_S, max_retries=0)
 
 
 class Inference:
@@ -29,14 +31,24 @@ class Inference:
         self._client = client or make_client(settings)
         self._on_fallback = on_fallback
 
-    def chat(self, messages: list[dict], tools: list[dict]) -> tuple[Any, str]:
-        """Return (assistant message, model name used). Primary twice, then the fallback model twice."""
+    def chat(self, messages: list[dict], tools: list[dict], deadline: float | None = None) -> tuple[Any, str]:
+        """Return (assistant message, model name used). Primary twice, then the fallback model twice.
+
+        `deadline` is a time.monotonic() value: no attempt starts after it and no attempt may run past it, so a stalled
+        endpoint cannot hold a run (and its room) beyond the run cap.
+        """
         last_error: Exception | None = None
         for model in (self._settings.model_primary, self._settings.model_fallback):
             for _attempt in range(2):
+                call_timeout = CALL_TIMEOUT_S
+                if deadline is not None:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise InferenceError(f"run time cap reached before the model answered ({last_error})" if last_error else "run time cap reached before the model answered")
+                    call_timeout = max(1.0, min(CALL_TIMEOUT_S, left))
                 try:
                     reply = self._client.chat.completions.create(
-                        model=model, messages=messages, tools=tools, tool_choice="auto", max_tokens=MAX_TOKENS
+                        model=model, messages=messages, tools=tools, tool_choice="auto", max_tokens=MAX_TOKENS, timeout=call_timeout
                     )
                     # Report the model the endpoint says it served: it accepted a nonexistent name in a probe.
                     return reply.choices[0].message, (getattr(reply, "model", None) or model)

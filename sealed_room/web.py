@@ -270,11 +270,20 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
         def work() -> None:
             try:
                 run_to_completion(settings, run_request, record)
+            except Exception as exc:  # never leave a record on "running" for a page to poll forever
+                if record.snapshot()["status"] == "running":
+                    record.finish("failed", f"{type(exc).__name__}: {exc}")
             finally:
                 controls.drop(run_request.run_id)
                 run_slots.release(run_request.run_id)
 
-        threading.Thread(target=work, name=f"run-{run_request.run_id}", daemon=False).start()
+        try:
+            threading.Thread(target=work, name=f"run-{run_request.run_id}", daemon=False).start()
+        except Exception as exc:  # no worker will ever release this slot, so release it here
+            controls.drop(run_request.run_id)
+            run_slots.release(run_request.run_id)
+            record.finish("failed", f"{type(exc).__name__}: {exc}")
+            raise
         return RedirectResponse(f"/runs/{run_request.run_id}", status_code=303)
 
     def record_or_404(run_id: str) -> dict:

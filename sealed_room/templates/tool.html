@@ -4,7 +4,7 @@
 <h1>Choose the tool</h1>
 <p class="lede">A new tool, your study data, one door. You decide at every step; the agent does the work.</p>
 
-{% if busy_minutes %}<div class="banner calm"><strong>Every sealed room is in use.</strong> One frees in at most {{ busy_minutes }} minute{{ "" if busy_minutes == 1 else "s" }}.{% if active_run %} <a href="/runs/{{ active_run }}">Look at that run</a>.{% endif %}</div>
+{% if busy_minutes %}<div class="banner calm"><strong>Every sealed room is in use.</strong> One should free within {{ busy_minutes }} minute{{ "" if busy_minutes == 1 else "s" }}.{% if active_run %} <a href="/runs/{{ active_run }}">Look at that run</a>.{% endif %}</div>
 {% elif error %}<div class="banner bad">{{ error }}</div>{% endif %}
 
 <div class="box toolcard">

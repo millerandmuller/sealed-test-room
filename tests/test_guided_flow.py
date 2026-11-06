@@ -560,7 +560,7 @@ def test_busy_notice_links_to_the_run_in_progress(client):
     with every_slot_taken(c.app, ["ab12"]):
         page = c.get("/?busy=1").text
     assert "Every sealed room is in use" in page and "/runs/ab12" in page
-    assert "banner bad" not in page and "frees in at most" in page
+    assert "banner bad" not in page and "should free within" in page
 
 
 # --- second review: wording that must not lie, and tests that can fail ---------------------------------------------
@@ -830,7 +830,7 @@ def test_busy_page_says_how_long_in_minutes_from_the_held_run(client):
     with every_slot_taken(c.app, ["ab12"]):
         page = c.get("/?busy=1").text
     close_wait_min = load_settings().caps["close_wait_s"] // 60   # a run waiting at the close frees the room within the close wait
-    assert "Every sealed room is in use." in page and f"frees in at most {close_wait_min} minutes" in page and "banner bad" not in page
+    assert "Every sealed room is in use." in page and f"should free within {close_wait_min} minutes" in page and "banner bad" not in page
 
 
 def test_screen_four_says_the_file_goes_in_last_before_it_has_entered(client):
@@ -983,3 +983,149 @@ def test_two_runs_start_at_once_the_third_is_told_to_wait_and_a_finished_run_fre
             thread.join(5)
     assert c.app.state.run_slots.free() == 2
     assert c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"].startswith("/runs/")
+
+
+# --- re-examine findings on the two-slot change ---------------------------------------------------------------------
+
+def test_the_bound_before_the_gate_still_includes_the_gate_wait():
+    from datetime import datetime, timedelta, timezone
+    from sealed_room.runctl import slot_free_within_s
+    caps = {"gate_wait_s": 120, "close_wait_s": 120, "whole_run_s": 360}
+    t0 = datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc)
+    booting = {"awaiting": None, "started": t0.isoformat(), "decisions": {}}
+    assert slot_free_within_s(booting, caps, t0) == 120 + 360 + 120                        # nothing has happened yet: the full ten minutes
+    assert slot_free_within_s(booting, caps, t0 + timedelta(seconds=5)) == 120 + 355 + 120
+    assert slot_free_within_s({}, caps, t0) == 600
+    at_gate = {"awaiting": "gate", "awaiting_since": t0.isoformat(), "started": t0.isoformat(), "decisions": {}}
+    assert slot_free_within_s(at_gate, caps, t0) == 600                                    # a yes at the first second leaves the whole run
+
+
+def test_inference_gives_up_at_the_run_deadline_and_shrinks_each_call_to_the_time_left():
+    import time
+    from types import SimpleNamespace
+    from sealed_room.inference import Inference, InferenceError
+    seen = []
+    def create(**kwargs):
+        seen.append(kwargs["timeout"])
+        raise RuntimeError("endpoint stalled")
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    infer = Inference(load_settings(), client=client)
+    with pytest.raises(InferenceError):
+        infer.chat([], [], deadline=time.monotonic() + 3.0)
+    assert seen and all(1.0 <= t <= 3.0 for t in seen)                                     # never the full 60 s when 3 s are left
+    seen.clear()
+    with pytest.raises(InferenceError, match="run time cap reached"):
+        infer.chat([], [], deadline=time.monotonic() - 1)
+    assert seen == []                                                                       # no call at all after the deadline
+    seen.clear()
+    with pytest.raises(InferenceError):
+        infer.chat([], [])
+    assert seen == [60.0] * 4                                                              # without a deadline: the old behaviour
+
+
+def test_destroy_check_lists_only_this_runs_room():
+    from sealed_room.rooms import _own_listing
+    listing = "NAME       IMAGE          STATUS     CREATED\nsr-aa11    python:3.12    running    2026-11-06 20:07:09\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
+    assert _own_listing(listing, "sr-bb22") == "NAME       IMAGE          STATUS     CREATED\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
+    gone = _own_listing(listing, "dl-cc33")
+    assert "sr-aa11" not in gone and "sr-bb22" not in gone and "(no line for dl-cc33)" in gone
+    assert _own_listing("No sandboxes found.", "sr-aa11") == "No sandboxes found.\n(no line for sr-aa11)" or "(no line for sr-aa11)" in _own_listing("No sandboxes found.", "sr-aa11")
+
+
+def _fails_to_start(client, monkeypatch, where):
+    """POST a run while `where` raises; returns the response status and leaves the app for inspection."""
+    import sealed_room.web as web
+    c, runs = client
+    where(monkeypatch, web)
+    try:
+        c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
+        status = "answered"
+    except Exception:                                   # the test client re-raises what the app did not catch
+        status = "raised"
+    return c, runs, status
+
+
+def test_a_thread_that_cannot_start_frees_its_slot_and_ends_its_record(client, monkeypatch):
+    def boom(monkeypatch, web):
+        class NoThread:
+            def __init__(self, *a, **k): pass
+            def start(self): raise RuntimeError("can't start new thread")
+        monkeypatch.setattr(web.threading, "Thread", NoThread)
+    c, runs, status = _fails_to_start(client, monkeypatch, boom)
+    slots = c.app.state.run_slots
+    assert status == "raised" and slots.free() == slots.capacity and slots.active == []
+    stored = [json.loads(p.read_text()) for p in runs.glob("*/run.json")]
+    assert stored and all(r["status"] == "failed" and "can't start new thread" in r["error"] for r in stored)
+
+
+def test_an_error_between_taking_a_slot_and_naming_it_frees_the_slot(client, monkeypatch):
+    def boom(monkeypatch, web):
+        monkeypatch.setattr(web, "prepare_run", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    c, runs, status = _fails_to_start(client, monkeypatch, boom)
+    assert status == "raised" and c.app.state.run_slots.free() == c.app.state.run_slots.capacity
+
+
+def test_an_error_after_the_slot_is_named_frees_it_by_name_and_drops_the_control(client, monkeypatch):
+    def boom(monkeypatch, web):
+        monkeypatch.setattr(web.ControlRegistry, "add", lambda self, run_id, control: (_ for _ in ()).throw(RuntimeError("registry broke")))
+    c, runs, status = _fails_to_start(client, monkeypatch, boom)
+    assert status == "raised" and c.app.state.run_slots.free() == c.app.state.run_slots.capacity and c.app.state.run_slots.active == []
+
+
+def test_a_worker_that_raises_ends_the_record_and_frees_the_slot_and_the_control(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record: (_ for _ in ()).throw(RuntimeError("worker broke")))
+    location = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"]
+    for thread in threading.enumerate():
+        if thread.name.startswith("run-"):
+            thread.join(5)
+    run_id = location.rsplit("/", 1)[1]
+    stored = json.loads((runs / run_id / "run.json").read_text())
+    assert stored["status"] == "failed" and "worker broke" in stored["error"]
+    assert c.app.state.run_slots.free() == c.app.state.run_slots.capacity and c.app.state.controls.get(run_id) is None
+
+
+def test_the_busy_notice_points_at_the_run_whose_slot_frees_first_through_the_real_start_path(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    hold = threading.Event()
+    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record: hold.wait(5))
+    first = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"]
+    c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
+    named = c.app.state.run_slots.active
+    page = c.get("/?busy=1").text
+    hold.set()
+    for thread in threading.enumerate():
+        if thread.name.startswith("run-"):
+            thread.join(5)
+    assert len(named) == 2 and first.rsplit("/", 1)[1] in named                              # both runs are named in their slots
+    assert any(f"/runs/{rid}" in page for rid in named)                                      # and the notice links to one of them
+
+
+def test_the_agent_hands_the_run_deadline_to_every_model_call():
+    from sealed_room.agent import run_agent
+    seen = {}
+    class Stop(Exception):
+        pass
+    class Infer:
+        def chat(self, messages, tools, deadline=None):
+            seen["deadline"] = deadline
+            raise Stop()
+    import time
+    cutoff = time.monotonic() + 100
+    with pytest.raises(Stop):
+        run_agent(Infer(), None, "admet-ai==2.0.1", "2.0.1", 12, "", 5, deadline=cutoff)
+    assert seen["deadline"] == cutoff
+
+
+def test_closing_a_room_records_only_that_rooms_line_when_another_run_has_rooms_too(msb, runner, record):
+    from sealed_room.rooms import RoomManager
+    mine = RoomManager(msb, record, "python:3.12", 2, 2048)
+    mine.open_download("aaaa")
+    runner.rooms.add("sr-bbbb")                                  # another run's room is listed at the same time
+    mine.close_all()
+    check = record.snapshot()["rooms"][0]["destroy_check"]
+    assert check["absent"] is True
+    assert "sr-bbbb" not in check["list_output"]                 # the other run's room is not copied into this receipt
+    assert "(no line for dl-aaaa)" in check["list_output"]       # and the absence of this one is stated
