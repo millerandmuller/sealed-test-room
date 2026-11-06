@@ -1029,7 +1029,7 @@ def test_destroy_check_lists_only_this_runs_room():
     assert _own_listing(listing, "sr-bb22") == "NAME       IMAGE          STATUS     CREATED\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
     gone = _own_listing(listing, "dl-cc33")
     assert "sr-aa11" not in gone and "sr-bb22" not in gone and "(no line for dl-cc33)" in gone
-    assert _own_listing("No sandboxes found.", "sr-aa11") == "No sandboxes found.\n(no line for sr-aa11)" or "(no line for sr-aa11)" in _own_listing("No sandboxes found.", "sr-aa11")
+    assert _own_listing("No sandboxes found.", "sr-aa11") == "No sandboxes found.\n(no line for sr-aa11)"
 
 
 def _fails_to_start(client, monkeypatch, where):

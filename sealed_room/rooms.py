@@ -57,7 +57,7 @@ DOWNLOAD_MEMORY_MB = 1024
 def _own_listing(text: str, room_id: str) -> str:
     """The `msb list` header and this room's own line, if any: with two runs at once the listing also names the other run's rooms."""
     lines = text.splitlines()
-    kept = [ln for i, ln in enumerate(lines) if (i == 0 and ln.strip().startswith("NAME")) or room_id in ln]
+    kept = [ln for i, ln in enumerate(lines) if (i == 0 and ln.strip().startswith(("NAME", "No sandboxes"))) or room_id in ln]
     if not any(room_id in ln for ln in kept):
         kept.append(f"(no line for {room_id})")
     return "\n".join(kept) if lines else text
