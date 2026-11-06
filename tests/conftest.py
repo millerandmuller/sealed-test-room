@@ -47,7 +47,8 @@ class FakeRunner:
         if sub == "list":
             if "--format" in argv:
                 return CmdResult(tuple(argv), 0, json.dumps([{"name": n} for n in sorted(self.rooms)]), "", 1)
-            return CmdResult(tuple(argv), 0, "\n".join(sorted(self.rooms)) or "No sandboxes found.", "", 1)
+            rows = [f"{n}    python:3.12    running    2026-11-06 20:07:09" for n in sorted(self.rooms)]   # the real table: a header, then one row per room
+            return CmdResult(tuple(argv), 0, "\n".join(["NAME       IMAGE          STATUS     CREATED", *rows]) if rows else "No sandboxes found.", "", 1)
         if sub == "copy":
             if self.copy_failures_left > 0:
                 self.copy_failures_left -= 1

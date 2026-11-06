@@ -34,8 +34,9 @@ class Inference:
     def chat(self, messages: list[dict], tools: list[dict], deadline: float | None = None) -> tuple[Any, str]:
         """Return (assistant message, model name used). Primary twice, then the fallback model twice.
 
-        `deadline` is a time.monotonic() value: no attempt starts after it and no attempt may run past it, so a stalled
-        endpoint cannot hold a run (and its room) beyond the run cap.
+        `deadline` is a time.monotonic() value: no attempt starts after it and each call's timeout is the time left, so an
+        endpoint that stalls cannot hold a run beyond the run cap. The timeout limits each socket read, so a response that arrives
+        very slowly, a byte at a time, is not cut.
         """
         last_error: Exception | None = None
         for model in (self._settings.model_primary, self._settings.model_fallback):

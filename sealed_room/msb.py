@@ -131,5 +131,5 @@ class Msb:
         return [item["name"] for item in json.loads(text)]
 
     def list_raw(self) -> CmdResult:
-        """The human-readable listing, kept verbatim for the destroy check on the receipt."""
+        """The human-readable listing; the destroy check keeps the header and the run's own line of it (rooms._own_listing)."""
         return self._run([self._bin, "list"], 60)

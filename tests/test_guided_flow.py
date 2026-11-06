@@ -1025,11 +1025,17 @@ def test_inference_gives_up_at_the_run_deadline_and_shrinks_each_call_to_the_tim
 
 def test_destroy_check_lists_only_this_runs_room():
     from sealed_room.rooms import _own_listing
-    listing = "NAME       IMAGE          STATUS     CREATED\nsr-aa11    python:3.12    running    2026-11-06 20:07:09\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
-    assert _own_listing(listing, "sr-bb22") == "NAME       IMAGE          STATUS     CREATED\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
+    header = "NAME       IMAGE          STATUS     CREATED"
+    listing = f"{header}\nsr-aa11    python:3.12    running    2026-11-06 20:07:09\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
+    assert _own_listing(listing, "sr-bb22") == f"{header}\nsr-bb22    python:3.12    running    2026-11-06 20:07:09"
     gone = _own_listing(listing, "dl-cc33")
     assert "sr-aa11" not in gone and "sr-bb22" not in gone and "(no line for dl-cc33)" in gone
     assert _own_listing("No sandboxes found.", "sr-aa11") == "No sandboxes found.\n(no line for sr-aa11)"
+    assert _own_listing(listing.replace("\n", "\r\n"), "sr-aa11").count("sr-aa11") == 1
+    longer = f"{header}\nsr-aa113x    python:3.12    running    2026-11-06 20:07:09"
+    assert "sr-aa113x" not in _own_listing(longer, "sr-aa11")                      # a longer name is not this room
+    for odd in ("Error: cannot connect to the msb daemon", "", "   ", "no sandboxes found"):
+        assert _own_listing(odd, "sr-aa11") == odd                                  # unknown shapes are kept as they came
 
 
 def _fails_to_start(client, monkeypatch, where):
@@ -1129,3 +1135,18 @@ def test_closing_a_room_records_only_that_rooms_line_when_another_run_has_rooms_
     assert check["absent"] is True
     assert "sr-bbbb" not in check["list_output"]                 # the other run's room is not copied into this receipt
     assert "(no line for dl-aaaa)" in check["list_output"]       # and the absence of this one is stated
+
+
+def test_a_worker_that_raises_after_finishing_leaves_the_finished_record_alone(client, monkeypatch):
+    import sealed_room.web as web
+    c, runs = client
+    def finish_then_raise(settings, request, record):
+        record.finish("completed")
+        raise RuntimeError("late failure")
+    monkeypatch.setattr(web, "run_to_completion", finish_then_raise)
+    run_id = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"].rsplit("/", 1)[1]
+    for thread in threading.enumerate():
+        if thread.name.startswith("run-"):
+            thread.join(5)
+    stored = json.loads((runs / run_id / "run.json").read_text())
+    assert stored["status"] == "completed" and stored["error"] is None

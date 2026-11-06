@@ -55,12 +55,19 @@ DOWNLOAD_MEMORY_MB = 1024
 
 
 def _own_listing(text: str, room_id: str) -> str:
-    """The `msb list` header and this room's own line, if any: with two runs at once the listing also names the other run's rooms."""
+    """The `msb list` header and this room's own line, if any: with two runs at once the listing also names the other run's rooms.
+
+    Only a listing in a known shape (a NAME table or "No sandboxes found.") is filtered; error text or anything else is kept as it came.
+    """
     lines = text.splitlines()
-    kept = [ln for i, ln in enumerate(lines) if (i == 0 and ln.strip().startswith(("NAME", "No sandboxes"))) or room_id in ln]
-    if not any(room_id in ln for ln in kept):
+    first = lines[0].strip() if lines else ""
+    if not first.startswith(("NAME", "No sandboxes")):
+        return text
+    own = re.compile(rf"(?<![\w-]){re.escape(room_id)}(?![\w-])")  # the whole name, not a longer name that contains it
+    kept = [lines[0]] + [ln for ln in lines[1:] if own.search(ln)]
+    if len(kept) == 1:
         kept.append(f"(no line for {room_id})")
-    return "\n".join(kept) if lines else text
+    return "\n".join(kept)
 
 
 class RoomManager:
