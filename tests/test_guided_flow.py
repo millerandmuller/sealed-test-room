@@ -30,15 +30,15 @@ def every_slot_taken(app, run_ids=()):
     slots = app.state.run_slots
     held = []
     while slots.free():
-        assert slots.acquire()
-        run_id = run_ids[len(held)] if len(held) < len(run_ids) else f"f{len(held):03x}"
-        slots.name(run_id)
-        held.append(run_id)
+        slot = slots.claim()
+        assert slot is not None
+        slots.name(slot, run_ids[len(held)] if len(held) < len(run_ids) else f"f{len(held):03x}")
+        held.append(slot)
     try:
         yield
     finally:
-        for run_id in held:
-            slots.release(run_id)
+        for slot in held:
+            slots.release(slot)
 
 
 # --- the gate and the close wait ----------------------------------------------------------------------------------
@@ -808,15 +808,15 @@ def test_slot_bound_covers_every_path_a_run_can_still_take():
     caps = {"gate_wait_s": 300, "close_wait_s": 300, "whole_run_s": 900}
     t0 = datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)
     at = lambda s: (t0 + timedelta(seconds=s)).isoformat()
-    # at the gate with 100 s gone: the rest of the gate wait (200), a yes then the whole run (900), then the close wait (300)
+    # at the gate with 100 s gone: the rest of the gate wait (200), a yes then the working time (900 plus the 60 s grace), then the close wait (300)
     gate = {"awaiting": "gate", "awaiting_since": at(0), "started": at(0), "decisions": {}}
-    assert slot_free_within_s(gate, caps, t0 + timedelta(seconds=100)) == 200 + 900 + 300
+    assert slot_free_within_s(gate, caps, t0 + timedelta(seconds=100)) == 200 + 960 + 300
     # at the close step: only the rest of the close wait
     close = {"awaiting": "close", "awaiting_since": at(0), "started": at(0), "decisions": {}}
     assert slot_free_within_s(close, caps, t0 + timedelta(seconds=250)) == 50
     # working after a 120 s gate wait, 200 s after the start: gate time does not count against the run cap
     work = {"awaiting": None, "started": at(0), "decisions": {"send_file": {"asked": at(10), "at": at(130), "answer": "yes"}}}
-    assert slot_free_within_s(work, caps, t0 + timedelta(seconds=200)) == (900 - 80) + 300
+    assert slot_free_within_s(work, caps, t0 + timedelta(seconds=200)) == (960 - 80) + 300
     # a missing record still gives a finite, honest bound
     assert slot_free_within_s({}, caps, t0) >= 300
 
@@ -891,12 +891,12 @@ def test_the_limits_in_the_it_rules_are_the_shipped_short_ones():
     assert {k: caps[k] for k in CAP_DEFAULTS} == CAP_DEFAULTS              # the fallbacks cannot drift from the config
 
 
-def test_a_juror_never_waits_longer_than_ten_minutes():
+def test_a_juror_never_waits_longer_than_eleven_minutes():
     from datetime import datetime, timezone
     from sealed_room.runctl import slot_free_within_s
     now = datetime.now(timezone.utc)
     gate = {"awaiting": "gate", "awaiting_since": now.isoformat(), "started": now.isoformat(), "decisions": {}}
-    assert slot_free_within_s(gate, load_settings().caps, now) <= 600      # the worst case: a yes at the last second of the gate wait
+    assert slot_free_within_s(gate, load_settings().caps, now) <= 660      # the worst case: a yes at the last second of the gate wait, a run that works to the watchdog, then the close wait
 
 
 def test_plain_duration_names_a_limit_in_whole_minutes_or_seconds():
@@ -909,11 +909,11 @@ def test_no_screen_receipt_or_readme_states_a_limit_that_differs_from_the_config
     from pathlib import Path
     from sealed_room.runctl import plain_duration, slot_free_within_s
     caps = load_settings().caps
-    allowed = {plain_duration(caps[k]) for k in ("gate_wait_s", "close_wait_s", "whole_run_s")} | {"10 minutes"}
+    allowed = {plain_duration(caps[k]) for k in ("gate_wait_s", "close_wait_s", "whole_run_s", "watchdog_grace_s")} | {"11 minutes"}
     c, runs = client
     gate = gated_record()
     close = good_record(); close.update(run_id="b002", status="running", awaiting="close")
-    done = good_record(); done.update(run_id="b003", limits={k: caps[k] for k in ("gate_wait_s", "close_wait_s", "whole_run_s")})
+    done = good_record(); done.update(run_id="b003", limits={k: caps[k] for k in ("gate_wait_s", "close_wait_s", "whole_run_s", "watchdog_grace_s")})
     for rec in (gate, close, done):
         save(runs, rec)
     pages = [c.get("/").text, c.get("/runs/ab12").text, c.get("/runs/b002?step=6").text, c.get("/runs/b003/receipt").text,
@@ -928,7 +928,7 @@ def test_no_screen_receipt_or_readme_states_a_limit_that_differs_from_the_config
 def test_receipt_carries_the_limits_that_applied_and_still_validates(client):
     c, runs = client
     caps = load_settings().caps
-    rec = good_record(); rec.update(limits={k: caps[k] for k in ("gate_wait_s", "close_wait_s", "whole_run_s")})
+    rec = good_record(); rec.update(limits={k: caps[k] for k in ("gate_wait_s", "close_wait_s", "whole_run_s", "watchdog_grace_s")})
     save(runs, rec)
     page = c.get("/runs/ab12/receipt").text
     assert "Limits that applied to this run: working time 6 minutes" in page and "2 minutes at the gate and 2 minutes at the close" in page
@@ -942,7 +942,8 @@ def test_execute_run_records_the_limits_it_ran_under(guided, runner):
     control.answer_gate(False)
     thread.join(5)
     caps = load_settings().caps
-    assert record.snapshot()["limits"] == {"gate_wait_s": caps["gate_wait_s"], "close_wait_s": caps["close_wait_s"], "whole_run_s": caps["whole_run_s"]}
+    assert record.snapshot()["limits"] == {"gate_wait_s": caps["gate_wait_s"], "close_wait_s": caps["close_wait_s"], "whole_run_s": caps["whole_run_s"],
+                                           "watchdog_grace_s": caps["watchdog_grace_s"]}
 
 
 # --- two sealed rooms at once (F21, measured on the host: two runs at 2048 MB each, both clean) -----------------------
@@ -955,21 +956,33 @@ def test_the_config_allows_two_runs_and_two_gb_rooms():
 def test_slots_admit_up_to_capacity_then_refuse_at_once_and_free_on_release():
     from sealed_room.runctl import RunSlots
     slots = RunSlots(2)
-    assert slots.acquire() and slots.acquire() and not slots.acquire()
+    first, second = slots.claim(), slots.claim()
+    assert first and second and slots.claim() is None
     assert slots.locked() and slots.free() == 0
-    slots.name("aaaa"); slots.name("bbbb")
+    slots.name(first, "aaaa"); slots.name(second, "bbbb")
     assert slots.active == ["aaaa", "bbbb"]
-    slots.release("aaaa")
+    assert slots.release(first) is True
     assert not slots.locked() and slots.free() == 1 and slots.active == ["bbbb"]
-    slots.release("bbbb"); slots.release()                                   # a release with nothing held changes nothing
-    assert slots.free() == 2 and RunSlots(0).capacity == 1                  # never fewer than one slot
+    assert RunSlots(0).capacity == 1                                         # never fewer than one slot
+
+
+def test_a_run_can_only_give_back_its_own_slot_and_only_once():
+    from sealed_room.runctl import RunSlots, Slot
+    slots = RunSlots(2)
+    mine, other = slots.claim(), slots.claim()
+    slots.name(mine, "aaaa"); slots.name(other, "bbbb")
+    assert slots.release(mine) is True
+    assert slots.release(mine) is False                                      # a second release (worker and watchdog both finish) changes nothing
+    assert slots.active == ["bbbb"] and slots.free() == 1                    # the other run's slot is untouched
+    assert slots.release(Slot()) is False and slots.active == ["bbbb"]       # a slot object that was never issued frees nothing
+    assert slots.claim() is not None and slots.claim() is None               # exactly one slot came back
 
 
 def test_two_runs_start_at_once_the_third_is_told_to_wait_and_a_finished_run_frees_a_slot(client, monkeypatch):
     import sealed_room.web as web
     c, runs = client
     gate, started = threading.Event(), []
-    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record: (started.append(request.run_id), gate.wait(5)))
+    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record, **kw: (started.append(request.run_id), gate.wait(5)))
     first = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
     second = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
     third = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
@@ -993,11 +1006,11 @@ def test_the_bound_before_the_gate_still_includes_the_gate_wait():
     caps = {"gate_wait_s": 120, "close_wait_s": 120, "whole_run_s": 360}
     t0 = datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc)
     booting = {"awaiting": None, "started": t0.isoformat(), "decisions": {}}
-    assert slot_free_within_s(booting, caps, t0) == 120 + 360 + 120                        # nothing has happened yet: the full ten minutes
-    assert slot_free_within_s(booting, caps, t0 + timedelta(seconds=5)) == 120 + 355 + 120
-    assert slot_free_within_s({}, caps, t0) == 600
+    assert slot_free_within_s(booting, caps, t0) == 120 + 360 + 60 + 120                   # nothing has happened yet: the full eleven minutes
+    assert slot_free_within_s(booting, caps, t0 + timedelta(seconds=5)) == 120 + 415 + 120
+    assert slot_free_within_s({}, caps, t0) == 660
     at_gate = {"awaiting": "gate", "awaiting_since": t0.isoformat(), "started": t0.isoformat(), "decisions": {}}
-    assert slot_free_within_s(at_gate, caps, t0) == 600                                    # a yes at the first second leaves the whole run
+    assert slot_free_within_s(at_gate, caps, t0) == 660                                    # a yes at the first second leaves the whole run
 
 
 def test_inference_gives_up_at_the_run_deadline_and_shrinks_each_call_to_the_time_left():
@@ -1081,7 +1094,7 @@ def test_an_error_after_the_slot_is_named_frees_it_by_name_and_drops_the_control
 def test_a_worker_that_raises_ends_the_record_and_frees_the_slot_and_the_control(client, monkeypatch):
     import sealed_room.web as web
     c, runs = client
-    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record: (_ for _ in ()).throw(RuntimeError("worker broke")))
+    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record, **kw: (_ for _ in ()).throw(RuntimeError("worker broke")))
     location = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"]
     for thread in threading.enumerate():
         if thread.name.startswith("run-"):
@@ -1096,7 +1109,7 @@ def test_the_busy_notice_points_at_the_run_whose_slot_frees_first_through_the_re
     import sealed_room.web as web
     c, runs = client
     hold = threading.Event()
-    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record: hold.wait(5))
+    monkeypatch.setattr(web, "run_to_completion", lambda s, request, record, **kw: hold.wait(5))
     first = c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False).headers["location"]
     c.post("/runs", data={"tool": "admet-ai", "source": "demo"}, follow_redirects=False)
     named = c.app.state.run_slots.active
@@ -1140,7 +1153,7 @@ def test_closing_a_room_records_only_that_rooms_line_when_another_run_has_rooms_
 def test_a_worker_that_raises_after_finishing_leaves_the_finished_record_alone(client, monkeypatch):
     import sealed_room.web as web
     c, runs = client
-    def finish_then_raise(settings, request, record):
+    def finish_then_raise(settings, request, record, **kw):
         record.finish("completed")
         raise RuntimeError("late failure")
     monkeypatch.setattr(web, "run_to_completion", finish_then_raise)

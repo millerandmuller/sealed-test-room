@@ -32,7 +32,8 @@
         "completed",
         "failed",
         "aborted",
-        "declined"
+        "declined",
+        "stopped"
       ]
     },
     "clean": {
@@ -497,7 +498,19 @@
       "properties": {
         "whole_run_s": {"type": "integer", "minimum": 1},
         "gate_wait_s": {"type": "integer", "minimum": 1},
-        "close_wait_s": {"type": "integer", "minimum": 1}
+        "close_wait_s": {"type": "integer", "minimum": 1},
+        "watchdog_grace_s": {"type": "integer", "minimum": 1}
+      }
+    },
+    "stopped_at_cap": {
+      "type": ["object", "null"],
+      "description": "Set when the watchdog ended the run: when, the limits that applied, and whether every room was proven absent.",
+      "properties": {
+        "at": {"type": "string"},
+        "cap_s": {"type": "integer", "minimum": 1},
+        "grace_s": {"type": "integer", "minimum": 1},
+        "rooms_absent": {"type": ["boolean", "null"]},
+        "problems": {"type": "array", "items": {"type": "string"}}
       }
     },
     "decisions": {

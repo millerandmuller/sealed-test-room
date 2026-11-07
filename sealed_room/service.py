@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 import shutil
 from pathlib import Path
+from typing import Callable
 
 from .config import Settings
 from .hashing import sha256_file
@@ -45,7 +46,7 @@ def prepare_run(settings: Settings, tool: str, study_source: Path, display_name:
     return request, record
 
 
-def run_to_completion(settings: Settings, request: RunRequest, record: RunRecord) -> None:
+def run_to_completion(settings: Settings, request: RunRequest, record: RunRecord, on_rooms_gone: Callable[[], None] | None = None) -> None:
     msb = Msb(settings.msb_bin)
     try:
         infer = Inference(settings, on_fallback=lambda model: record.update_model(fallback_used=True, name=model))
@@ -53,4 +54,4 @@ def run_to_completion(settings: Settings, request: RunRequest, record: RunRecord
         record.add_step("phase", "finished", "", f"status failed: {exc}")
         record.finish("failed", f"{type(exc).__name__}: {exc}")
         return
-    execute_run(settings, msb, infer, request, record)
+    execute_run(settings, msb, infer, request, record, on_rooms_gone=on_rooms_gone)

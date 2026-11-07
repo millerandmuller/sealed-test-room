@@ -13,6 +13,7 @@ _RULES: tuple[tuple[tuple[str, ...], str], ...] = (
      "The tool could not be installed."),
     (("call through the door failed",), "The room could not reach the inference endpoint for the final check."),
     (("both models failed", "vultr_inference_api_key"), "The AI model service could not be reached, so the agent could not work."),
+    (("stopped at the run cap",), "The run was still working after its time limit, so it was stopped and its rooms were destroyed."),
     (("time cap",), "The run took longer than its time limit and was stopped. Rooms were destroyed."),
     (("room cleanup problem", "still listed"), "A room could not be proven removed. Treat this run as not clean."),
     (("the service stopped during this run",), "The service restarted during this run. Its rooms were removed at the next start."),

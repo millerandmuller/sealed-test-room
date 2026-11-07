@@ -24,6 +24,7 @@ from .runctl import CAP_DEFAULTS, RunControl, plain_duration
 from .runrecord import RunRecord, now_iso
 from .toolinstall import ToolInstallError, fetch_wheels, install_offline, resolve_tool
 from .wallcheck import WallCheckFailed, evaluate, pins_for, resolve_ipv4, run_wall_check
+from .watchdog import Watchdog
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,10 @@ class RunAborted(RuntimeError):
     pass
 
 
+STOPPED_ERROR = ("Stopped at the run cap: the run was still working {grace} after its {cap} time limit, "
+                 "so the watchdog destroyed its rooms.")
+
+
 def execute_run(
     settings: Settings,
     msb: Msb,
@@ -51,15 +56,43 @@ def execute_run(
     request: RunRequest,
     record: RunRecord,
     resolver: Callable[[str], str] = resolve_ipv4,
+    on_rooms_gone: Callable[[], None] | None = None,
 ) -> None:
-    """Run the whole pipeline and leave the final status on the record. Never raises."""
-    deadline = time.monotonic() + settings.caps["whole_run_s"]
+    """Run the whole pipeline and leave the final status on the record. Never raises.
+
+    `on_rooms_gone` is called by the watchdog, from its own thread, once it has destroyed a stuck run's rooms and
+    proven them absent, so the caller can give the run's slot back even though the run's own thread may never return.
+    """
+    cap = int(settings.caps["whole_run_s"])
+    grace = int(settings.caps.get("watchdog_grace_s", CAP_DEFAULTS["watchdog_grace_s"]))
+    deadline = time.monotonic() + cap
     rooms = RoomManager(msb, record, settings.room["image"], settings.room["cpus"], settings.room["memory_mb"])
     record.update_model(base_url=settings.inference_base_url, name=settings.model_primary)
     record.update(limits={k: int(settings.caps.get(k, CAP_DEFAULTS[k])) for k in CAP_DEFAULTS})  # what applied to this run, for the receipt
+
+    def stop_at_cap() -> None:
+        """The watchdog: the run is still working past its cap plus the grace period. Destroy every room and say so."""
+        error = STOPPED_ERROR.format(grace=plain_duration(grace), cap=plain_duration(cap))
+        if not record.stop_at_cap({"at": now_iso(), "cap_s": cap, "grace_s": grace, "rooms_absent": None, "problems": []}, error):
+            return  # the run ended by itself in the same instant
+        _phase(record, "watchdog", f"Still working {plain_duration(grace)} after the {plain_duration(cap)} limit. Destroying every room of this run now.")
+        try:
+            problems = rooms.stop()
+        except Exception as exc:  # the watchdog must leave a visible answer whatever happens
+            problems = [f"{type(exc).__name__}: {exc}"]
+        record.update_stopped(rooms_absent=not problems, problems=problems)
+        if problems:
+            _phase(record, "watchdog", "A room could not be proven removed: " + "; ".join(problems))
+            return  # its memory may still be in use, so its slot stays taken
+        _phase(record, "watchdog", "Every room of this run was destroyed and verified absent.")
+        if on_rooms_gone is not None:
+            on_rooms_gone()
+
+    watchdog = Watchdog(cap + grace, stop_at_cap)
+    watchdog.start()
     status, error = "completed", None
     try:
-        _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline)
+        _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline, watchdog)
     except WallCheckFailed as exc:
         record.update(wall_check_verdict="FAILED")
         record.add_step("phase", "wall check", "", f"Wall check failed: room not sealed. {exc}")
@@ -72,7 +105,10 @@ def execute_run(
     except Exception as exc:  # last resort: no path may leave a run at "running"
         status, error = "failed", f"{type(exc).__name__}: {exc}"
     finally:
+        watchdog.disarm()
         problems = rooms.close_all()
+    if record.snapshot()["status"] == "stopped":
+        return  # the watchdog already ended this run and wrote why; a late return from a stuck step changes nothing
     if problems:
         cleanup = "Room cleanup problem: " + "; ".join(problems)
         status, error = "failed", f"{error} | {cleanup}" if error else cleanup  # keep the original cause
@@ -95,7 +131,7 @@ def _budget(deadline: float, wanted_s: int) -> int:
     return max(10, min(wanted_s, int(deadline - time.monotonic())))
 
 
-def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) -> None:
+def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline, watchdog) -> None:
     rows = validate_study(request.study_path)
     tool = resolve_tool(request.tool)
     record.update_tool(spec=tool["spec"])
@@ -113,7 +149,8 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     # The wall check needs only the bare room, so it runs first: the cage is tested before the tool is even fetched.
     _wall_check(msb, sealed, record, settings)
     _check_clock(deadline)
-    deadline += _gate(request.control, record, settings)  # a person's thinking time is not the run's time
+    with watchdog.paused():  # a person's thinking time is not the run's time, for the run's clock or the watchdog's
+        deadline += _gate(request.control, record, settings)
 
     _phase(record, "download room", "Opening a download room (no study data inside) to fetch the tool.")
     fetched = _fetch_with_retry(msb, rooms, record, request.run_id, tool, run_dir, deadline)
@@ -141,7 +178,8 @@ def _pipeline(settings, msb, infer, request, record, rooms, resolver, deadline) 
     _verify_results(request.study_path, run_dir / "outputs" / "results.csv", record)
     _door_check(settings, msb, sealed, record, rows, deadline)
 
-    closed_by = _wait_for_close(request.control, record, settings)
+    with watchdog.paused():
+        closed_by = _wait_for_close(request.control, record, settings)
     rooms.close(sealed)
     _phase(record, "destroy", f"Sealed room destroyed and verified absent ({closed_by}).")
 

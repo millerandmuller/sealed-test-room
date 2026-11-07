@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 
 # Fallback only: config/it_rules.json is the source of truth and always carries these keys (a test keeps them equal).
-CAP_DEFAULTS = {"gate_wait_s": 120, "close_wait_s": 120, "whole_run_s": 360}
+CAP_DEFAULTS = {"gate_wait_s": 120, "close_wait_s": 120, "whole_run_s": 360, "watchdog_grace_s": 60}
 
 
 def plain_duration(seconds: float) -> str:
@@ -67,59 +67,58 @@ class RunControl:
         self._close_event.set()
 
 
+class Slot:
+    """One run's hold on a sealed room. Only the holder's own object can give it back."""
+
+    def __init__(self) -> None:
+        self.run_id: str | None = None
+
+
 class RunSlots:
     """How many runs may hold a sealed room at once (the host has memory for a measured number; see the README's limits).
 
-    `acquire` never waits: a full house answers False at once so the page can say so. The lock protocol is the one a
-    threading.Lock has (`acquire`, `release`, `locked`, context manager), with `locked()` meaning "every slot is taken".
+    `claim` never waits: a full house answers None at once so the page can say so. Giving a slot back takes the holder's
+    own `Slot`, so one run can never free another run's slot, and giving it back twice changes nothing.
     """
 
     def __init__(self, capacity: int) -> None:
         self.capacity = max(1, int(capacity))
         self._lock = threading.Lock()
-        self._active: list[str] = []          # run ids holding a slot, oldest first
-        self._unnamed = 0                     # holders that have not been given a run id yet
+        self._held: list[Slot] = []           # oldest first
 
-    def acquire(self, blocking: bool = False) -> bool:
+    def claim(self) -> Slot | None:
         with self._lock:
-            if len(self._active) + self._unnamed >= self.capacity:
-                return False
-            self._unnamed += 1
-            return True
+            if len(self._held) >= self.capacity:
+                return None
+            slot = Slot()
+            self._held.append(slot)
+            return slot
 
-    def name(self, run_id: str) -> None:
+    def name(self, slot: Slot, run_id: str) -> None:
         """The run that just took a slot says who it is, so a full house can point at the runs in it."""
         with self._lock:
-            if self._unnamed:
-                self._unnamed -= 1
-                self._active.append(run_id)
+            slot.run_id = run_id
 
-    def release(self, run_id: str | None = None) -> None:
+    def release(self, slot: Slot) -> bool:
+        """True if this call gave the slot back, False if it was already back."""
         with self._lock:
-            if run_id in self._active:
-                self._active.remove(run_id)
-            elif self._unnamed:
-                self._unnamed -= 1
+            if slot not in self._held:
+                return False
+            self._held.remove(slot)
+            return True
 
     def free(self) -> int:
         with self._lock:
-            return self.capacity - len(self._active) - self._unnamed
+            return self.capacity - len(self._held)
 
     def locked(self) -> bool:
-        with self._lock:
-            return len(self._active) + self._unnamed >= self.capacity
+        return self.free() <= 0
 
     @property
     def active(self) -> list[str]:
+        """Run ids of the named holders, oldest first."""
         with self._lock:
-            return list(self._active)
-
-    def __enter__(self) -> "RunSlots":
-        self.acquire()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.release()
+            return [s.run_id for s in self._held if s.run_id]
 
 
 class ControlRegistry:
@@ -149,16 +148,17 @@ class ControlRegistry:
 
 
 def slot_free_within_s(record: dict, caps: dict, now: datetime) -> int:
-    """An upper bound, in seconds, on how long a run still holds the room: every wait runs out and the run cap applies.
+    """An upper bound, in seconds, on how long a run still holds the room: every wait runs out, the run cap applies, and
+    the watchdog destroys the rooms of a run that is still working one grace period after the cap.
 
-    At the gate: the rest of the gate wait, then the whole run if the answer is yes, then the close wait.
-    Working: what is left of the run cap (time spent waiting at the gate does not count against it), then the close wait.
+    At the gate: the rest of the gate wait, then the working time (cap plus grace), then the close wait.
+    Working: what is left of the cap plus grace (time spent waiting at the gate does not count against it), then the close wait.
     At the close step: the rest of the close wait.
     Before the gate (room opening, walls being tested): the whole gate wait is still ahead, so it is added too.
-    The bound assumes every step honours the run cap; a host command that hangs can exceed it (the model calls and the
-    exec steps are cut at the cap; copies and room removal are not).
+    The one case the bound does not cover: a room the host cannot remove (the run is then marked stopped and not clean).
     """
-    gate_wait, close_wait, run_cap = (int(caps.get(k, CAP_DEFAULTS[k])) for k in ("gate_wait_s", "close_wait_s", "whole_run_s"))
+    gate_wait, close_wait, run_cap, grace = (int(caps.get(k, CAP_DEFAULTS[k])) for k in ("gate_wait_s", "close_wait_s", "whole_run_s", "watchdog_grace_s"))
+    working = run_cap + grace
 
     def seconds_between(a: str | None, b: datetime) -> float:
         return max(0.0, (b - datetime.fromisoformat(a)).total_seconds()) if a else 0.0
@@ -170,7 +170,7 @@ def slot_free_within_s(record: dict, caps: dict, now: datetime) -> int:
     if record.get("awaiting") == "close":
         return int(max(0.0, close_wait - seconds_between(record.get("awaiting_since"), now)))
     if record.get("awaiting") == "gate":
-        return int(max(0.0, gate_wait - seconds_between(record.get("awaiting_since"), now)) + run_cap + close_wait)
+        return int(max(0.0, gate_wait - seconds_between(record.get("awaiting_since"), now)) + working + close_wait)
     worked = seconds_between(record.get("started"), now) - waited_at_gate
     before_the_gate = 0 if send.get("asked") else gate_wait                  # the gate wait is still ahead: room opening, walls being tested
-    return int(before_the_gate + max(0.0, run_cap - worked) + close_wait)
+    return int(before_the_gate + max(0.0, working - worked) + close_wait)

@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # "declined": the person chose not to send the file in; nothing entered the room.
-STATUSES = ("running", "completed", "failed", "aborted", "declined")
+# "stopped": the watchdog ended the run at its cap plus the grace period and destroyed its rooms.
+STATUSES = ("running", "completed", "failed", "aborted", "declined", "stopped")
 
 
 def now_iso() -> str:
@@ -54,6 +55,7 @@ class RunRecord:
             "awaiting_since": None,  # when the current wait for the person began (used to say how long a held slot can last)
             "awaiting": None,    # "gate" (send the file in?) or "close" (close the room?) while a person is being waited for
             "limits": {},        # the caps that applied to this run (seconds): working time, wait at the gate, wait at the close
+            "stopped_at_cap": None,  # set by the watchdog: when, after how many working seconds, and what became of the rooms
             "decisions": {},     # send_file / close_room / attached: who decided what, and when
             "notes": [],
             "honesty": [],
@@ -118,13 +120,32 @@ class RunRecord:
             self._save_locked()
 
     def finish(self, status: str, error: str | None = None) -> None:
+        """End the run. A run the watchdog already stopped keeps that status: a late worker cannot rewrite it."""
         if status not in STATUSES:
             raise ValueError(f"unknown status {status!r}")
         with self._lock:
+            if self._data["status"] == "stopped":
+                return
             self._data["status"] = status
             self._data["error"] = error
             self._data["finished"] = now_iso()
             self._save_locked()
+
+    def stop_at_cap(self, details: dict, error: str) -> bool:
+        """The watchdog claims the run. False if the run had already ended by itself (nothing to stop)."""
+        with self._lock:
+            if self._data["status"] != "running":
+                return False
+            self._data.update(status="stopped", error=error, finished=now_iso(), awaiting=None, stopped_at_cap=details)
+            self._save_locked()
+            return True
+
+    def update_stopped(self, **fields) -> None:
+        """Fill in what the watchdog found once the rooms were checked."""
+        with self._lock:
+            if self._data["stopped_at_cap"] is not None:
+                self._data["stopped_at_cap"].update(fields)
+                self._save_locked()
 
     # -- reading ------------------------------------------------------------
     def snapshot(self) -> dict:

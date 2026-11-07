@@ -243,24 +243,23 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
             if token:
                 (settings.runs_dir / "_staging" / f"{token}.json").unlink(missing_ok=True)
             return templates.TemplateResponse(request, "data.html", data_context(str(exc)), status_code=400)
-        if not run_slots.acquire(blocking=False):
+        slot = run_slots.claim()
+        if slot is None:
             if not token:
                 _discard(staged)  # a held (previewed) upload stays held so the person can try again
             # Redirect instead of rendering at /runs, so a browser refresh cannot submit the form again.
             return RedirectResponse("/?busy=1", status_code=303)
-        run_id = None
         try:
             control = RunControl()
             try:
                 run_request, record = prepare_run(settings, tool, source_path, display, is_synthetic, control)
             except FileNotFoundError:  # the held upload was swept between the preview and the confirm
-                run_slots.release()
+                run_slots.release(slot)
                 return templates.TemplateResponse(request, "data.html", data_context("That file is no longer held. Choose it again."), status_code=400)
-            run_id = run_request.run_id
-            run_slots.name(run_id)
-            controls.add(run_id, control)
+            run_slots.name(slot, run_request.run_id)
+            controls.add(run_request.run_id, control)
         except Exception:
-            run_slots.release(run_id)
+            run_slots.release(slot)
             raise
         finally:
             _discard(staged)  # the run keeps its own private copy
@@ -269,19 +268,21 @@ def create_app(settings: Settings | None = None, cleanup: bool = True) -> FastAP
 
         def work() -> None:
             try:
-                run_to_completion(settings, run_request, record)
+                run_to_completion(settings, run_request, record, on_rooms_gone=lambda: run_slots.release(slot))
             except Exception as exc:  # never leave a record on "running" for a page to poll forever
                 if record.snapshot()["status"] == "running":
                     record.finish("failed", f"{type(exc).__name__}: {exc}")
             finally:
                 controls.drop(run_request.run_id)
-                run_slots.release(run_request.run_id)
+                # A run the watchdog stopped gives its slot back only once its rooms are proven absent (the watchdog does that).
+                if record.snapshot()["status"] != "stopped":
+                    run_slots.release(slot)
 
         try:
             threading.Thread(target=work, name=f"run-{run_request.run_id}", daemon=False).start()
         except Exception as exc:  # no worker will ever release this slot, so release it here
             controls.drop(run_request.run_id)
-            run_slots.release(run_request.run_id)
+            run_slots.release(slot)
             record.finish("failed", f"{type(exc).__name__}: {exc}")
             raise
         return RedirectResponse(f"/runs/{run_request.run_id}", status_code=303)

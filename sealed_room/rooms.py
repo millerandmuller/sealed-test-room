@@ -9,6 +9,7 @@ Every path ends in `close`, and `close` proves the room is gone by listing rooms
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 
 from .msb import Msb, MsbError
@@ -17,6 +18,10 @@ from .runrecord import RunRecord, clip, now_iso
 
 class RoomStillListed(RuntimeError):
     """The destroy check found the room after removal. The run must not produce a green receipt."""
+
+
+class RoomsStopped(RuntimeError):
+    """The watchdog stopped this run: no room may be opened any more."""
 
 
 @dataclass
@@ -78,6 +83,14 @@ class RoomManager:
         self._cpus = cpus
         self._memory_mb = memory_mb
         self._rooms: dict[str, Room] = {}
+        self._lock = threading.RLock()  # the run's thread and the watchdog's thread both close rooms; one at a time
+        self._stopped = False
+
+    def stop(self) -> list[str]:
+        """The watchdog's call: no new rooms, every room destroyed and checked. Returns the problems found (empty: all absent)."""
+        with self._lock:
+            self._stopped = True
+        return self.close_all()
 
     def open_download(self, run_id: str, attempt: int = 1) -> Room:
         """A retry gets its own name (dl2-...) so each room keeps its own lifecycle entries on the receipt."""
@@ -93,6 +106,10 @@ class RoomManager:
 
     def close(self, room: Room) -> None:
         """Remove the room, then prove it is absent. Raises RoomStillListed if it is not."""
+        with self._lock:
+            self._close_locked(room)
+
+    def _close_locked(self, room: Room) -> None:
         if not room.open:
             return
         removed = self._msb.remove(room.id)
@@ -125,15 +142,27 @@ class RoomManager:
 
     def _open(self, name: str, kind: str, net_args: list[str], pins: dict[str, str], memory_mb: int | None = None) -> Room:
         room = Room(id=name, kind=kind, policy=policy_string(net_args), pinned_hosts=dict(pins))
-        # Registered before the create call: if create fails after the VM exists, close_all still removes it.
-        self._rooms[name] = room
+        with self._lock:
+            if self._stopped:
+                raise RoomsStopped(f"the run was stopped at its cap; room {name} was not opened")
+            # Registered before the create call: if create fails after the VM exists, close_all still removes it.
+            self._rooms[name] = room
         self._msb.create(name, self._image, memory_mb or self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
+        with self._lock:
+            if self._stopped:  # the watchdog stopped the run while this room was being created: it exists now, so remove it
+                room.open = True
+                self._record_new(name, kind, room, pins)
+                self._close_locked(room)
+                raise RoomsStopped(f"the run was stopped at its cap while room {name} was being opened; it was removed")
+        self._record_new(name, kind, room, pins)
+        return room
+
+    def _record_new(self, name: str, kind: str, room: Room, pins: dict[str, str]) -> None:
         self._record.add_room(
             {"id": name, "kind": kind, "policy": room.policy, "image": self._image,
              "pinned_hosts": dict(pins), "created": now_iso(), "destroyed": None,
              "verified_absent": None, "destroy_check": None}
         )
-        return room
 
     def _pin_hosts(self, room: Room, pins: dict[str, str]) -> None:
         """Write name-to-IP lines into the room's /etc/hosts so no DNS is needed at all."""

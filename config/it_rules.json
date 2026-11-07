@@ -14,6 +14,7 @@
   "caps": {
     "tool_run_s": 300,
     "whole_run_s": 360,
+    "watchdog_grace_s": 60,
     "max_agent_steps": 25,
     "gate_wait_s": 120,
     "close_wait_s": 120,

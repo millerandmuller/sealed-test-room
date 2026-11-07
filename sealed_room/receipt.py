@@ -103,6 +103,7 @@ def build_receipt(record: dict, reference: dict | None = None) -> dict:
         "destroy": {"all_rooms_verified_absent": bool(record["rooms"]) and all(r.get("verified_absent") for r in record["rooms"])},
         "study": record.get("study"),
         "limits": record.get("limits", {}),
+        "stopped_at_cap": record.get("stopped_at_cap"),
         "decisions": record.get("decisions", {}),
         "notes": record.get("notes", []),
         "honesty": record.get("honesty", []),

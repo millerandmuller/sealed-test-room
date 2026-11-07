@@ -16,6 +16,7 @@
   <div data-slot="art">{% with fresh_gone = (r.status == "completed" and (r.finished|seconds_since) < 8) or (r.status == "declined" and (r.finished|seconds_since) < 8) %}{% include "_art.html" with context %}{% endwith %}</div>
 
   <div data-slot="main">
+  {% if r.stopped_at_cap %}<div class="banner bad"><strong>Stopped at the cap.</strong> This run was still working {{ r.stopped_at_cap.grace_s|plain_duration }} after its {{ r.stopped_at_cap.cap_s|plain_duration }} limit, so the watchdog destroyed its rooms. {% if r.stopped_at_cap.rooms_absent %}Every room was verified absent.{% elif r.stopped_at_cap.rooms_absent == false %}<strong>A room could not be proven removed.</strong>{% else %}Checking that the rooms are gone.{% endif %}</div>{% endif %}
   {% if r.error %}<div class="banner bad">{{ r.error|plain_failure }}
     <details class="noprint" style="margin-top:6px"><summary class="small">Technical detail</summary><pre class="code" style="white-space:pre-wrap">{{ r.error }}</pre></details></div>{% endif %}
 
@@ -23,7 +24,7 @@
   {% if screen == 3 %}
     {% if r.status == "declined" %}
       <div class="banner calm"><strong>You stopped here.</strong> Your file did not go in. The room was destroyed{% if p.sealed == "gone" %} and verified absent{% endif %}; nothing entered it.</div>
-    {% elif r.status in ("failed", "aborted") %}
+    {% elif r.status in ("failed", "aborted", "stopped") %}
       {% if r.inputs %}<p class="small">The run stopped after your file had gone in. The audit trail shows what happened to it and whether the room was proven gone.</p>
       {% elif r.decisions.send_file and r.decisions.send_file.answer == "yes" and r.tool.version_installed %}<p class="small">The run stopped after you said yes and after the tool was installed. Your file may have entered the room: no input hash was recorded, so check the audit trail for the copy step and for whether the room was proven gone.</p>
       {% elif r.decisions.send_file and r.decisions.send_file.answer == "yes" %}<p class="small">The run stopped after you said yes, but before the tool was ready. Your file had not been copied in: nothing entered the room.</p>
@@ -120,7 +121,7 @@
   {% endif %}
 
   {% if r.status != "running" %}
-    <p class="actions" style="margin-top:22px"><a class="btn" href="/runs/{{ r.run_id }}/receipt">Open the receipt</a>{% if screen == 7 or r.status in ("declined", "failed", "aborted") %}<a class="btn" href="/">Start another</a>{% endif %}</p>
+    <p class="actions" style="margin-top:22px"><a class="btn" href="/runs/{{ r.run_id }}/receipt">Open the receipt</a>{% if screen == 7 or r.status in ("declined", "failed", "aborted", "stopped") %}<a class="btn" href="/">Start another</a>{% endif %}</p>
   {% endif %}
   </div>
 
