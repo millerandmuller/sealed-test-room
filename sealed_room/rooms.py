@@ -96,6 +96,8 @@ class RoomManager:
         with self._idle:  # a room still being created exists soon: wait until it has removed itself, or say so
             if not self._idle.wait_for(lambda: self._creating == 0, timeout=CREATE_WAIT_S):
                 problems.append("a room was still being created and could not be proven removed")
+            # A room that came up late removes itself on the run's thread; if that removal failed it is still open here.
+            problems += [f"RoomStillListed: room {name} is not proven removed" for name, room in self._rooms.items() if room.open]
         return problems
 
     def open_download(self, run_id: str, attempt: int = 1) -> Room:

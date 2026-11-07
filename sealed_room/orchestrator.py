@@ -113,12 +113,16 @@ def execute_run(
         snap = record.snapshot()
         if snap["stopped_at_cap"]["rooms_absent"] is False and not problems and all(r.get("verified_absent") for r in snap["rooms"]):
             record.update_stopped(rooms_absent=True, problems=[])
+            record.add_watchdog_step("watchdog", "The room that could not be removed at the stop was removed on a later attempt and verified absent.")
             if on_rooms_gone is not None:
                 on_rooms_gone()
         return
+    new_problems = [p for p in problems if p not in (error or "")]  # a failed final close is already the error: say it once
     if problems:
-        cleanup = "Room cleanup problem: " + "; ".join(problems)
-        status, error = "failed", f"{error} | {cleanup}" if error else cleanup  # keep the original cause
+        status = "failed"
+    if new_problems:
+        cleanup = "Room cleanup problem: " + "; ".join(new_problems)
+        error = f"{error} | {cleanup}" if error else cleanup  # keep the original cause
     record.add_step("phase", "finished", "", f"status {status}" + (f": {error}" if error else ""))
     record.finish(status, error)
 

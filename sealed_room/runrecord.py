@@ -162,6 +162,14 @@ class RunRecord:
             self._save_locked()
             return True
 
+    def add_watchdog_step(self, name: str, text: str) -> None:
+        """A line in the audit trail about the stop itself. Allowed from any thread, but only on a run that was stopped."""
+        with self._lock:
+            if self._data["status"] != "stopped":
+                return
+            self._data["steps"].append({"t": now_iso(), "kind": "phase", "name": name, "args": "", "result_excerpt": clip(text)})
+            self._save_locked()
+
     def update_stopped(self, **fields) -> None:
         """Fill in what the watchdog found once the rooms were checked."""
         with self._lock:
@@ -196,6 +204,14 @@ def reconcile_stale_runs(runs_dir: Path) -> list[str]:
     for path in sorted(Path(runs_dir).glob("*/run.json")):
         try:
             data = json.loads(path.read_text())
+            if isinstance(data, dict) and data.get("status") == "stopped" and (data.get("stopped_at_cap") or {}).get("rooms_absent") is None:
+                # The service died between the watchdog's stop and its room check: say the check never finished.
+                data["stopped_at_cap"].update(rooms_absent=False, problems=["The service stopped before the watchdog finished checking the rooms. They were removed at the next start, but this record cannot prove it."])
+                tmp = path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(data, indent=2))
+                os.replace(tmp, path)
+                fixed.append(data["run_id"])
+                continue
             if not isinstance(data, dict) or data.get("status") != "running":
                 continue
         except (ValueError, OSError):

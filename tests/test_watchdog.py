@@ -408,6 +408,7 @@ def test_a_room_the_first_removal_missed_is_retried_and_frees_the_slot_when_it_f
         assert freed == [1] and runner.rooms == set(), (freed, runner.rooms, record.snapshot()['rooms'], record.snapshot()['stopped_at_cap'])
         snap = record.snapshot()
         assert snap["stopped_at_cap"]["rooms_absent"] is True and all(r["verified_absent"] for r in snap["rooms"])
+        assert "removed on a later attempt" in snap["steps"][-1]["result_excerpt"]      # the audit trail says so too
     finally:
         release.set()
         thread.join(10)
@@ -420,3 +421,66 @@ def test_a_viewer_keeps_polling_until_the_watchdog_has_checked_the_rooms(web_cli
     assert 'data-status="running"' in c.get("/runs/6666/fragment").text
     record.update_stopped(rooms_absent=True)
     assert 'data-status="stopped"' in c.get("/runs/6666/fragment").text
+
+
+# --- findings from the third adversarial pass --------------------------------------------------------------------------
+
+def test_stop_does_not_report_clean_when_the_late_rooms_own_removal_fails(msb, runner, record):
+    rooms = RoomManager(msb, record, "python:3.12", 2, 2048)
+    real = runner.__call__
+    stopper, answers = [], []
+
+    def slow_create(argv, timeout_s, stdin_text=None):
+        if argv[1] == "create" and not stopper:
+            thread = threading.Thread(target=lambda: answers.append(rooms.stop()))   # the watchdog runs before the VM exists
+            stopper.append(thread)
+            thread.start()
+            assert wait_until(lambda: rooms._stopped)
+            time.sleep(0.2)                              # its removal and listing find nothing: the room is not there yet
+            runner.keep_rooms_on_rm = True               # and the host cannot remove the room that now comes up
+        return real(argv, timeout_s, stdin_text)
+    msb._run = slow_create
+    with pytest.raises(Exception):
+        rooms.open_download("ab12")
+    stopper[0].join(5)
+    assert answers and answers[0] and "dl-ab12" in answers[0][0]       # the stop reports the room, it does not say clean
+    assert runner.rooms == {"dl-ab12"}
+
+
+def test_a_late_successful_retry_adds_its_own_line_to_the_audit_trail(record):
+    record.stop_at_cap({"at": "t", "cap_s": 1, "grace_s": 1, "rooms_absent": False, "problems": ["x"]}, "Stopped at the run cap: x")
+    outcome = []
+    worker = threading.Thread(target=lambda: (record.add_watchdog_step("watchdog", "removed on a later attempt"), outcome.append(1)))
+    worker.start(); worker.join(5)
+    assert [s["name"] for s in record.snapshot()["steps"]] == ["watchdog"]
+    done = RunRecord("7777", record.dir.parent)
+    done.finish("completed")
+    done.add_watchdog_step("watchdog", "should not appear")
+    assert done.snapshot()["steps"] == []                                # only a stopped run takes such a line
+
+
+def test_a_stopped_record_whose_room_check_never_finished_is_closed_out_at_the_next_start(tmp_path):
+    from sealed_room.runrecord import reconcile_stale_runs
+    record = RunRecord("8888", tmp_path / "runs")
+    record.stop_at_cap({"at": "t", "cap_s": 1, "grace_s": 1, "rooms_absent": None, "problems": []}, "Stopped at the run cap: x")
+    assert reconcile_stale_runs(tmp_path / "runs") == ["8888"]
+    stored = json.loads((tmp_path / "runs" / "8888" / "run.json").read_text())
+    assert stored["status"] == "stopped" and stored["stopped_at_cap"]["rooms_absent"] is False and stored["stopped_at_cap"]["problems"]
+
+
+def test_a_room_still_listed_after_the_final_close_is_named_once_in_the_error(monkeypatch, tmp_path, msb, runner):
+    study = tmp_path / "study.csv"
+    study.write_text("compound_id,smiles\nC1,CCO\n")
+    monkeypatch.setattr(orchestrator, "pins_for", lambda hosts, resolver: {h: "10.0.0.1" for h in hosts})
+    monkeypatch.setattr(orchestrator, "fetch_wheels", lambda *a, **k: {"wheels": [], "archive": tmp_path / "w.tar", "archive_sha256": "0" * 64})
+    monkeypatch.setattr(orchestrator, "install_offline", lambda *a, **k: "2.0.1")
+    monkeypatch.setattr(orchestrator, "_wall_check", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrator, "run_agent", lambda *a, **k: AgentOutcome(finished=True, results_copied=True))
+    monkeypatch.setattr(orchestrator, "_capture_runner", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrator, "_verify_results", lambda *a, **k: None)
+    monkeypatch.setattr(orchestrator, "_door_check", lambda *a, **k: runner.__setattr__("keep_rooms_on_rm", True))
+    request = RunRequest("ab12", "admet-ai", study, "study.csv", True, None)
+    record = RunRecord("ab12", tmp_path / "runs")
+    execute_run(quick_settings(60, 60), msb, None, request, record)
+    snap = record.snapshot()
+    assert snap["status"] == "failed" and snap["error"].count("room sr-ab12 is still listed after removal") == 1
