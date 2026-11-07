@@ -95,20 +95,27 @@ def test_rooms_stop_destroys_every_room_and_refuses_new_ones(msb, runner, record
     assert runner.rooms == set() and len(record.snapshot()["rooms"]) == 2
 
 
-def test_a_room_that_finishes_opening_after_the_stop_is_removed_at_once(msb, runner, record):
+def test_a_room_that_finishes_opening_after_the_stop_is_removed_before_the_stop_reports(msb, runner, record):
     rooms = RoomManager(msb, record, "python:3.12", 2, 2048)
     real = runner.__call__
-    stopped_during_create = []
+    stopper, answers = [], []
 
     def slow_create(argv, timeout_s, stdin_text=None):
         result = real(argv, timeout_s, stdin_text)
-        if argv[1] == "create" and not stopped_during_create:
-            stopped_during_create.append(rooms.stop())   # the watchdog runs while the VM is being made
+        if argv[1] == "create" and not stopper:
+            thread = threading.Thread(target=lambda: answers.append(rooms.stop()))   # the watchdog, on its own thread, mid-create
+            stopper.append(thread)
+            thread.start()
+            assert wait_until(lambda: rooms._stopped)
+            time.sleep(0.1)
+            assert not answers                           # the stop has not reported: a room is still coming up
         return result
     msb._run = slow_create
     with pytest.raises(RoomsStopped):
         rooms.open_download("ab12")
-    assert runner.rooms == set()                         # the room that came up late is gone too
+    stopper[0].join(5)
+    assert answers == [[]]                               # reported only after the late room was removed
+    assert runner.rooms == set()
     snap = record.snapshot()["rooms"]
     assert len(snap) == 1 and snap[0]["verified_absent"]
 
@@ -182,7 +189,7 @@ def test_the_watchdog_waits_for_the_cap_plus_the_grace_not_the_bare_cap(monkeypa
         time.sleep(2.0)                                                 # past the 1 s cap, inside the 3 s grace
         assert record.snapshot()["status"] == "running" and runner.rooms
         assert wait_until(lambda: record.snapshot()["status"] == "stopped")
-        assert runner.rooms == set()
+        assert wait_until(lambda: runner.rooms == set())
     finally:
         release.set()
         thread.join(10)
@@ -345,3 +352,71 @@ def test_a_stopped_run_shows_the_cap_on_its_screen_its_receipt_and_its_audit_tra
     body = c.get("/runs/5555/receipt.json").json()
     assert body["status"] == "stopped" and body["stopped_at_cap"]["cap_s"] == 360
     assert "stopped at the run cap" in body["error"].lower() and body["error_plain"].startswith("The run was still working")
+
+
+# --- findings from the second adversarial pass ------------------------------------------------------------------------
+
+def test_a_stopped_record_is_frozen_for_every_writer_except_the_watchdog(record):
+    record.add_input({"name": "kept"})
+    assert record.stop_at_cap({"at": "t", "cap_s": 1, "grace_s": 1, "rooms_absent": None, "problems": []}, "Stopped at the run cap: x")
+    result = {}
+
+    def late_worker():
+        record.update(wall_check_verdict="FAILED")
+        record.add_step("phase", "wall check", "", "Wall check failed: room not sealed.")
+        record.add_input({"name": "late"})
+        record.add_output({"name": "late"})
+        record.set_decision("send_file", {"answer": "yes"})
+        record.add_note("late")
+        record.update_tool(version_installed="9")
+        record.update_model(name="x")
+        result["done"] = True
+    worker = threading.Thread(target=late_worker)
+    worker.start(); worker.join(5)
+    snap = record.snapshot()
+    assert result["done"] and snap["wall_check_verdict"] is None and snap["steps"] == [] and snap["inputs"] == [{"name": "kept"}]
+    assert snap["outputs"] == [] and snap["decisions"] == {} and snap["notes"] == [] and snap["tool"]["version_installed"] is None
+    record.add_step("phase", "watchdog", "", "the watchdog's own line")        # the thread that stopped the run can still write
+    assert [s["name"] for s in record.snapshot()["steps"]] == ["watchdog"]
+
+
+def test_a_room_the_first_removal_missed_is_retried_and_frees_the_slot_when_it_finally_goes(monkeypatch, tmp_path, msb, runner):
+    study = tmp_path / "study.csv"
+    study.write_text("compound_id,smiles\nC1,CCO\n")
+    release = threading.Event()
+    monkeypatch.setattr(orchestrator, "pins_for", lambda hosts, resolver: {h: "10.0.0.1" for h in hosts})
+    monkeypatch.setattr(orchestrator, "fetch_wheels", lambda *a, **k: {"wheels": [], "archive": tmp_path / "w.tar", "archive_sha256": "0" * 64})
+    monkeypatch.setattr(orchestrator, "install_offline", lambda *a, **k: "2.0.1")
+    monkeypatch.setattr(orchestrator, "_wall_check", lambda *a, **k: None)
+
+    def stuck_agent(*a, **k):
+        runner.keep_rooms_on_rm = True                  # the host fails to remove the room once
+        release.wait(30)
+        runner.keep_rooms_on_rm = False                 # and has recovered when the stuck step returns
+        raise RuntimeError("the step returned")
+    monkeypatch.setattr(orchestrator, "run_agent", stuck_agent)
+    request = RunRequest("ab12", "admet-ai", study, "study.csv", True, None)
+    record = RunRecord("ab12", tmp_path / "runs")
+    freed = []
+    thread = threading.Thread(target=execute_run, args=(quick_settings(), msb, None, request, record), kwargs={"on_rooms_gone": lambda: freed.append(1)})
+    thread.start()
+    try:
+        assert wait_until(lambda: (record.snapshot()["stopped_at_cap"] or {}).get("rooms_absent") is False)
+        assert not freed and runner.rooms
+        release.set()
+        thread.join(10)
+        assert freed == [1] and runner.rooms == set(), (freed, runner.rooms, record.snapshot()['rooms'], record.snapshot()['stopped_at_cap'])
+        snap = record.snapshot()
+        assert snap["stopped_at_cap"]["rooms_absent"] is True and all(r["verified_absent"] for r in snap["rooms"])
+    finally:
+        release.set()
+        thread.join(10)
+
+
+def test_a_viewer_keeps_polling_until_the_watchdog_has_checked_the_rooms(web_client):
+    c, runs = web_client
+    record = RunRecord("6666", runs)
+    record.stop_at_cap({"at": "2026-11-07T10:07:00+00:00", "cap_s": 360, "grace_s": 60, "rooms_absent": None, "problems": []}, "Stopped at the run cap: x")
+    assert 'data-status="running"' in c.get("/runs/6666/fragment").text
+    record.update_stopped(rooms_absent=True)
+    assert 'data-status="stopped"' in c.get("/runs/6666/fragment").text

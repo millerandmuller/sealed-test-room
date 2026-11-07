@@ -32,6 +32,7 @@ class RunRecord:
         self.dir = Path(runs_dir) / run_id
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._stopper: int | None = None   # thread id of the watchdog that stopped this run; after that only it may write the story
         self._data: dict = {
             "run_id": run_id,
             "status": "running",
@@ -65,16 +66,22 @@ class RunRecord:
     # -- mutation -----------------------------------------------------------
     def update(self, **fields) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data.update(fields)
             self._save_locked()
 
     def update_tool(self, **fields) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["tool"].update(fields)
             self._save_locked()
 
     def update_model(self, **fields) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["model"].update(fields)
             self._save_locked()
 
@@ -92,6 +99,8 @@ class RunRecord:
 
     def add_step(self, kind: str, name: str, args: str, result_excerpt: str) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["steps"].append(
                 {"t": now_iso(), "kind": kind, "name": name, "args": clip(args, 400),
                  "result_excerpt": clip(result_excerpt)}
@@ -100,22 +109,30 @@ class RunRecord:
 
     def set_decision(self, name: str, value: dict) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["decisions"][name] = value
             self._save_locked()
 
     def add_note(self, text: str) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["notes"].append(text)
             self._save_locked()
 
     def add_input(self, entry: dict) -> None:
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["inputs"].append(entry)
             self._save_locked()
 
     def add_output(self, entry: dict) -> None:
         """One entry per file name: copying the same name out again replaces the earlier hash, which is now stale."""
         with self._lock:
+            if self._frozen_locked():
+                return
             self._data["outputs"] = [o for o in self._data["outputs"] if o["name"] != entry["name"]] + [entry]
             self._save_locked()
 
@@ -131,11 +148,16 @@ class RunRecord:
             self._data["finished"] = now_iso()
             self._save_locked()
 
+    def _frozen_locked(self) -> bool:
+        """A stopped run is frozen against its own late worker: only the watchdog's thread (and room lifecycle facts) may write."""
+        return self._data["status"] == "stopped" and threading.get_ident() != self._stopper
+
     def stop_at_cap(self, details: dict, error: str) -> bool:
         """The watchdog claims the run. False if the run had already ended by itself (nothing to stop)."""
         with self._lock:
             if self._data["status"] != "running":
                 return False
+            self._stopper = threading.get_ident()
             self._data.update(status="stopped", error=error, finished=now_iso(), awaiting=None, stopped_at_cap=details)
             self._save_locked()
             return True

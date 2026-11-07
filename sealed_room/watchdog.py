@@ -61,7 +61,8 @@ class Watchdog:
             self.resume()
 
     def disarm(self) -> None:
-        """The run ended by itself. If the watchdog fired in the same instant, `on_expire` must find nothing left to do."""
+        """The run ended by itself. If the watchdog fired in the same instant, `on_expire` may still run: it does nothing when the
+        record is already finished, and when it wins the race the run is stopped (not clean) and rooms are closed once."""
         with self._cond:
             self._disarmed = True
             self._cond.notify_all()

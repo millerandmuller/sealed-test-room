@@ -1,4 +1,4 @@
-<div data-status="{{ r.status }}" data-screen="{{ screen }}">
+<div data-status="{{ "running" if r.stopped_at_cap and r.stopped_at_cap.rooms_absent is none else r.status }}" data-screen="{{ screen }}">
   <div data-slot="head">
     {% include "_steps.html" with context %}
     <div class="headrow">

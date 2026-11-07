@@ -108,7 +108,14 @@ def execute_run(
         watchdog.disarm()
         problems = rooms.close_all()
     if record.snapshot()["status"] == "stopped":
-        return  # the watchdog already ended this run and wrote why; a late return from a stuck step changes nothing
+        # The watchdog already ended this run and wrote why; a late return from a stuck step changes nothing. One thing
+        # may still change: the close just above retried any room the watchdog could not remove.
+        snap = record.snapshot()
+        if snap["stopped_at_cap"]["rooms_absent"] is False and not problems and all(r.get("verified_absent") for r in snap["rooms"]):
+            record.update_stopped(rooms_absent=True, problems=[])
+            if on_rooms_gone is not None:
+                on_rooms_gone()
+        return
     if problems:
         cleanup = "Room cleanup problem: " + "; ".join(problems)
         status, error = "failed", f"{error} | {cleanup}" if error else cleanup  # keep the original cause

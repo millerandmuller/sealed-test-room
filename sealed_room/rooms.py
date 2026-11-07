@@ -57,6 +57,7 @@ def policy_string(args: list[str]) -> str:
 
 # The download room only runs pip, and now coexists with the sealed room, so it gets a smaller share of the host.
 DOWNLOAD_MEMORY_MB = 1024
+CREATE_WAIT_S = 130   # the longest an `msb create` may take (120 s) plus a margin
 
 
 def _own_listing(text: str, room_id: str) -> str:
@@ -84,13 +85,18 @@ class RoomManager:
         self._memory_mb = memory_mb
         self._rooms: dict[str, Room] = {}
         self._lock = threading.RLock()  # the run's thread and the watchdog's thread both close rooms; one at a time
+        self._idle = threading.Condition(self._lock)
+        self._creating = 0                # rooms whose create call is in flight
         self._stopped = False
 
     def stop(self) -> list[str]:
         """The watchdog's call: no new rooms, every room destroyed and checked. Returns the problems found (empty: all absent)."""
-        with self._lock:
-            self._stopped = True
-        return self.close_all()
+        self._stopped = True  # set before taking the lock: a close in flight on the run's thread must not delay the stop
+        problems = self.close_all()
+        with self._idle:  # a room still being created exists soon: wait until it has removed itself, or say so
+            if not self._idle.wait_for(lambda: self._creating == 0, timeout=CREATE_WAIT_S):
+                problems.append("a room was still being created and could not be proven removed")
+        return problems
 
     def open_download(self, run_id: str, attempt: int = 1) -> Room:
         """A retry gets its own name (dl2-...) so each room keeps its own lifecycle entries on the receipt."""
@@ -126,7 +132,7 @@ class RoomManager:
             destroy_check={"command": check, "rm_exit": removed.code,
                            "list_output": clip(_own_listing(listing.stdout or listing.stderr, room.id), 300), "absent": absent},
         )
-        room.open = False
+        room.open = not absent  # a room that is still listed stays open, so a later close retries it
         if not absent:
             raise RoomStillListed(f"room {room.id} is still listed after removal")
 
@@ -147,15 +153,21 @@ class RoomManager:
                 raise RoomsStopped(f"the run was stopped at its cap; room {name} was not opened")
             # Registered before the create call: if create fails after the VM exists, close_all still removes it.
             self._rooms[name] = room
-        self._msb.create(name, self._image, memory_mb or self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
-        with self._lock:
-            if self._stopped:  # the watchdog stopped the run while this room was being created: it exists now, so remove it
-                room.open = True
-                self._record_new(name, kind, room, pins)
-                self._close_locked(room)
-                raise RoomsStopped(f"the run was stopped at its cap while room {name} was being opened; it was removed")
-        self._record_new(name, kind, room, pins)
-        return room
+            self._creating += 1
+        try:
+            self._msb.create(name, self._image, memory_mb or self._memory_mb, self._cpus, net_args, labels=[f"run={name.split('-', 1)[1]}"])
+            with self._lock:
+                if self._stopped:  # the watchdog stopped the run while this room was being created: it exists now, so remove it
+                    room.open = True
+                    self._record_new(name, kind, room, pins)
+                    self._close_locked(room)
+                    raise RoomsStopped(f"the run was stopped at its cap while room {name} was being opened; it was removed")
+            self._record_new(name, kind, room, pins)
+            return room
+        finally:
+            with self._idle:
+                self._creating -= 1
+                self._idle.notify_all()
 
     def _record_new(self, name: str, kind: str, room: Room, pins: dict[str, str]) -> None:
         self._record.add_room(
