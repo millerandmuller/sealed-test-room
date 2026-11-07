@@ -45,7 +45,7 @@ class RunAborted(RuntimeError):
     pass
 
 
-STOPPED_ERROR = ("Stopped at the run cap: the run was still working {grace} after its {cap} time limit, "
+STOPPED_ERROR = ("Stopped at the run cap: the run was still working {grace} after its time limit of {cap}, "
                  "so the watchdog destroyed its rooms.")
 
 

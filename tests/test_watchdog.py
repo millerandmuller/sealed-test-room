@@ -335,7 +335,7 @@ def test_a_stopped_run_shows_the_cap_on_its_screen_its_receipt_and_its_audit_tra
     record = RunRecord("5555", runs)
     record.update(wall_check_verdict="PASSED")
     record.stop_at_cap({"at": "2026-11-07T10:07:00+00:00", "cap_s": 360, "grace_s": 60, "rooms_absent": True, "problems": []},
-                       "Stopped at the run cap: the run was still working 1 minute after its 6 minutes time limit, so the watchdog destroyed its rooms.")
+                       "Stopped at the run cap: the run was still working 1 minute after its time limit of 6 minutes, so the watchdog destroyed its rooms.")
     screen = c.get("/runs/5555").text
     assert "Stopped at the cap." in screen and "6 minutes" in screen and "1 minute" in screen
     for path in ("/runs/5555/receipt", "/runs/5555/audit"):
