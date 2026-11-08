@@ -1,7 +1,7 @@
 {% macro doc(x, y, cls, label) %}
   <g class="file {{ cls }}" transform="translate({{ x }},{{ y }})">
-    <path d="M0 0h26l12 12v34H0z" fill="#fff" stroke="#1c1c1c" stroke-width="2"/><path d="M26 0v12h12" fill="none" stroke="#1c1c1c" stroke-width="2"/>
-    <path d="M7 24h24M7 31h24M7 38h16" stroke="#6a6f75" stroke-width="2"/>
+    <path d="M0 0h26l12 12v34H0z" class="sheet"/><path d="M26 0v12h12" class="fold"/>
+    <path d="M7 24h24M7 31h24M7 38h16" class="lines"/>
     <text x="19" y="62" text-anchor="middle" class="lbl">{{ label }}</text>
   </g>
 {% endmacro %}

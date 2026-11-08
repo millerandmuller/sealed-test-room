@@ -7,7 +7,15 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="site"><a href="/">Sealed Test Room</a></header>
+  {% include "_bg.html" %}
+  <header class="site"><a href="/"><svg class="logo" viewBox="0 0 64 54" aria-hidden="true" focusable="false">
+    <g class="logo-scan"><ellipse cx="30" cy="40" rx="24" ry="7" class="logo-ring"/></g>
+    <polygon points="14,14 30,6 46,14 30,22" class="logo-top"/>
+    <polygon points="14,14 30,22 30,42 14,34" class="logo-left"/>
+    <polygon points="30,22 46,14 46,34 30,42" class="logo-right"/>
+    <polygon points="33,27.5 39,24.5 39,37.5 33,40.5" class="logo-door"/>
+    <g class="logo-scan"><path d="M6 40 A24 7 0 0 0 54 40" class="logo-ring front"/></g>
+  </svg><span>Sealed Test Room</span></a></header>
   <main>{% block body %}{% endblock %}</main>
 </body>
 </html>
